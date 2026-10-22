@@ -142,8 +142,9 @@ canvas{display:block;width:100%;flex:1;min-height:0}
 <script>
 /* ---------- Config via URL ----------
   ?name=Lobby%20X5M         label shown top-right (default: from the browser)
-  &ssid=AAHW-5G&ap=W-3      Wi-Fi network / access point under test (labels only,
-                            a web page cannot read the SSID or signal itself)
+  &ssid=AAHW-5G&sec=WPA3&ap=W-3
+                            Wi-Fi network, security and access point under test (labels
+                            only: a web page cannot read SSID, security, signal or channel)
   &interval=2000            ms between pings (min 500)
   &timeout=4000             ms before a ping counts as lost
   &range=60                 minutes shown on the charts (5-240)
@@ -160,7 +161,7 @@ const num = (k, d) => { const v = parseFloat(P.get(k)); return isFinite(v) ? v :
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 if (P.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
 const NAME = P.get('name') || '';
-const SSID = P.get('ssid') || '', AP = P.get('ap') || '';
+const SSID = P.get('ssid') || '', AP = P.get('ap') || '', SEC = P.get('sec') || '';
 const INTERVAL = clamp(num('interval', 2000), 500, 60000);
 const TIMEOUT = clamp(num('timeout', 4000), 300, 30000);   // same as Windows ping
 const RANGE = clamp(num('range', 60), 5, 240) * 60e3;
@@ -539,36 +540,74 @@ function drawSpark(t, now){
 }
 
 /* ---------- Speed test ----------
-  Cloudflare's speed endpoints allow cross-origin reads and expose Resource
-  Timing, so download time is measured from first byte to last byte. Test size
-  adapts so each direction takes about 4 s. */
+  Download: a 25 MB file hosted next to this page (GitHub Pages CDN), so if the
+  page loaded, the test server is reachable. 3 parallel streams, read for up to
+  5 s or the size cap, timed from the first byte.
+  Upload: a LibreSpeed server (Sharktech, US), the one that answered fastest at
+  start; 2 parallel streams, size adapts to about 4 s. */
+const DL_URL = new URL('test/blob.bin', location.href).href;
+const DL_STREAMS = 3, DL_SECONDS = 5, DL_CAP = (FIXED_MB || 25)*1e6;
+const UL_SERVERS = [
+  ['Denver',      'https://denspeed.sharktech.net/backend/empty.php'],
+  ['Chicago',     'https://chispeed.sharktech.net/backend/empty.php'],
+  ['Los Angeles', 'https://laxspeed.sharktech.net/backend/empty.php'],
+  ['Las Vegas',   'https://lasspeed.sharktech.net/backend/empty.php']
+];
+let ulServer = null;
 let speedRunning = false, phase = null, nextSpeedAt = null;
-let nextDown = FIXED_MB ? FIXED_MB*1e6 : 5e6, nextUp = FIXED_MB ? Math.min(FIXED_MB, 25)*1e6 : 2e6;
+let nextUp = FIXED_MB ? Math.min(FIXED_MB, 20)*1e6 : 2e6;
 async function withTimeout(fn, ms){
   const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), ms);
   try { return await fn(ctrl.signal); } finally { clearTimeout(to); }
 }
-async function measureDown(bytes){
-  const url = `https://speed.cloudflare.com/__down?bytes=${Math.round(bytes)}&r=${rnd()}`;
-  return withTimeout(async signal => {
+async function pickUploadServer(){
+  const tries = await Promise.all(UL_SERVERS.map(async ([name, url]) => {
     const s = performance.now();
-    const r = await fetch(url, {cache:'no-store', credentials:'omit', signal});
-    const b = await r.arrayBuffer(); const wall = performance.now() - s;
-    if (!b.byteLength) throw new Error('empty');
-    const e = performance.getEntriesByName(url).pop();
-    const body = e && e.responseStart > 0 ? e.responseEnd - e.responseStart : 0;
-    const dur = body > wall*.3 ? body : wall;
-    return b.byteLength*8/(Math.max(dur, 1)/1000)/1e6;
-  }, 30000);
+    try { await withTimeout(signal => fetch(`${url}?r=${rnd()}`, {cache:'no-store', credentials:'omit', signal}), 5000); return {name, url, ms: performance.now() - s}; }
+    catch(e){ return null; }
+  }));
+  ulServer = tries.filter(Boolean).sort((a, b) => a.ms - b.ms)[0] || null;
+  if (!ulServer) return;
+  // the first reply included DNS + TLS; a second one on the open connection is the round trip
+  const s = performance.now();
+  try { await fetch(`${ulServer.url}?r=${rnd()}`, {cache:'no-store', credentials:'omit'}); ulServer.rtt = performance.now() - s; } catch(e){}
+}
+async function measureDown(){
+  const ctrl = new AbortController(), t0 = performance.now();
+  let bytes = 0, tFirst = null, tEnd = null;
+  const stop = () => { if (tEnd == null){ tEnd = performance.now(); ctrl.abort(); } };
+  const timer = setTimeout(stop, DL_SECONDS*1000 + 2000);   // +2 s allowance for the first byte
+  const stream = async () => {
+    while (!ctrl.signal.aborted){
+      const r = await fetch(DL_URL, {cache:'no-store', signal: ctrl.signal});
+      if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+      const rd = r.body.getReader();
+      for (;;){
+        const {done, value} = await rd.read(); if (done) break;
+        if (tFirst == null) tFirst = performance.now();
+        bytes += value.length;
+        if (bytes >= DL_CAP || performance.now() - tFirst >= DL_SECONDS*1000) stop();
+      }
+    }
+  };
+  await Promise.all(Array.from({length: DL_STREAMS}, () => stream().catch(e => { if (!ctrl.signal.aborted) throw e; })))
+    .finally(() => clearTimeout(timer));
+  if (!bytes || tFirst == null) throw new Error('no data');
+  return {mbps: bytes*8/(Math.max((tEnd ?? performance.now()) - tFirst, 1)/1000)/1e6, bytes};
 }
 async function measureUp(bytes, rtt){
-  const body = new Uint8Array(Math.round(bytes));
+  if (!ulServer) throw new Error('no upload server');
+  const part = Math.round(bytes/2), body = new Uint8Array(part);
   return withTimeout(async signal => {
     const s = performance.now();
-    const r = await fetch(`https://speed.cloudflare.com/__up?r=${rnd()}`, {method:'POST', body, cache:'no-store', credentials:'omit', signal});
-    await r.arrayBuffer(); const wall = performance.now() - s;
+    await Promise.all([0, 1].map(async () => {
+      const r = await fetch(`${ulServer.url}?r=${rnd()}`, {method:'POST', body, cache:'no-store', credentials:'omit', signal});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      await r.arrayBuffer();
+    }));
+    const wall = performance.now() - s;
     const dur = Math.max(wall - (rtt || 0), wall*.5);
-    return bytes*8/(dur/1000)/1e6;
+    return part*2*8/(dur/1000)/1e6;
   }, 30000);
 }
 async function speedTest(){
@@ -577,18 +616,15 @@ async function speedTest(){
   const t0 = Date.now(), idle = current(t0).lat;
   const rec = {t: t0, t1: null, down: null, up: null, idle, loaded: null};
   speeds.push(rec);
-  try { performance.clearResourceTimings(); } catch(e){}
   phase = 'down'; render();
-  try {
-    rec.down = await measureDown(nextDown); session.bytes += nextDown;
-    if (!FIXED_MB) nextDown = clamp(rec.down*1e6/8*4, 2e6, 50e6);
-  } catch(e){}
+  try { const d = await measureDown(); rec.down = d.mbps; session.bytes += d.bytes; } catch(e){}
   if (UPLOAD){
     phase = 'up'; render();
+    if (!ulServer) await pickUploadServer();
     try {
-      rec.up = await measureUp(nextUp, idle); session.bytes += nextUp;
-      if (!FIXED_MB) nextUp = clamp(rec.up*1e6/8*4, 1e6, 25e6);
-    } catch(e){}
+      rec.up = await measureUp(nextUp, ulServer?.rtt ?? idle); session.bytes += nextUp;
+      if (!FIXED_MB) nextUp = clamp(rec.up*1e6/8*4, 1e6, 20e6);
+    } catch(e){ ulServer = null; }   // pick again next time
   }
   rec.t1 = Date.now(); phase = null; speedRunning = false;
   // How much did latency rise while the link was saturated? (bufferbloat)
@@ -603,38 +639,24 @@ async function speedTest(){
 addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') speedTest(); });
 
 /* ---------- Network info ---------- */
-const net = {ip: '…', isp: '…', loc: '…', edge: '…', http: '', setup: '…'};
-async function probeConnection(){
-  // First request to a host: DNS + TCP + TLS are visible in Resource Timing
-  const url = `https://speed.cloudflare.com/__down?bytes=0&r=${rnd()}`;
-  try {
-    await (await fetch(url, {cache:'no-store', credentials:'omit'})).arrayBuffer();
-    const e = performance.getEntriesByName(url).pop();
-    if (e && e.requestStart > 0){
-      const dns = e.domainLookupEnd - e.domainLookupStart;
-      const tls = e.secureConnectionStart > 0 ? e.connectEnd - e.secureConnectionStart : 0;
-      const tcp = (e.secureConnectionStart > 0 ? e.secureConnectionStart : e.connectEnd) - e.connectStart;
-      const ttfb = e.responseStart - e.requestStart;
-      net.setup = `DNS ${f0(dns)} · TCP ${f0(tcp)} · TLS ${f0(tls)} · reply ${f0(ttfb)} ms`;
-    } else net.setup = 'Not reported';
-  } catch(e){ net.setup = 'Failed'; }
-}
+const net = {ip: '…', isp: '…', loc: '…'};
+// ipinfo.io first, ipwho.is as a fallback; both allow cross-origin reads without a key
 async function fetchMeta(){
   const before = net.ip;
+  const get = async url => (await withTimeout(signal => fetch(url, {cache:'no-store', credentials:'omit', signal}), 8000)).json();
   try {
-    const m = await (await fetch('https://speed.cloudflare.com/meta', {cache:'no-store', credentials:'omit'})).json();
-    net.ip = m.clientIp || net.ip;
-    net.isp = m.asOrganization ? `${m.asOrganization}${m.asn ? ' (AS' + m.asn + ')' : ''}` : '–';
-    net.loc = [m.city, m.region, m.country].filter(Boolean).join(', ') || '–';
-    const c = m.colo; net.edge = c ? (typeof c === 'string' ? c : [c.iata, c.city].filter(Boolean).join(' · ')) : '–';
-    net.http = m.httpProtocol || '';
+    const j = await get('https://ipinfo.io/json');
+    net.ip = j.ip || net.ip;
+    net.isp = j.org ? j.org.replace(/^AS(\d+)\s+(.*)$/, '$2 (AS$1)') : '–';
+    net.loc = [j.city, j.region, j.country].filter(Boolean).join(', ') || '–';
   } catch(e){
     try {
-      const txt = await (await fetch('https://www.cloudflare.com/cdn-cgi/trace', {cache:'no-store', credentials:'omit'})).text();
-      const o = Object.fromEntries(txt.trim().split('\n').map(l => l.split('=')));
-      net.ip = o.ip || net.ip; net.loc = o.loc || '–'; net.edge = o.colo || '–'; net.http = o.http || '';
-      if (net.isp === '…') net.isp = 'Unavailable';
-    } catch(e2){ if (net.ip === '…') net.ip = net.isp = net.loc = net.edge = 'Unavailable'; }
+      const j = await get('https://ipwho.is/');
+      net.ip = j.ip || net.ip;
+      const c = j.connection || {};
+      net.isp = c.isp || c.org ? `${c.isp || c.org}${c.asn ? ' (AS' + c.asn + ')' : ''}` : '–';
+      net.loc = [j.city, j.region, j.country_code].filter(Boolean).join(', ') || '–';
+    } catch(e2){ if (net.ip === '…') net.ip = net.isp = net.loc = 'Unavailable'; }
   }
   if (before !== '…' && before !== 'Unavailable' && net.ip !== before) logEvent('fair', `Public IP changed: ${before} → ${net.ip}`);
 }
@@ -663,8 +685,7 @@ function renderInfo(){
     ['Internet provider', net.isp],
     ['Public IP', net.ip],
     ['Location', net.loc],
-    ['Cloudflare edge', net.edge + (net.http ? ' · ' + net.http : '')],
-    ['Connection setup', net.setup],
+    ['Speed servers', `↓ GitHub Pages CDN · ↑ ${ulServer ? `Sharktech ${ulServer.name} (first reply ${f0(ulServer.ms)} ms)` : UPLOAD ? 'finding…' : 'off'}`],
     ['Browser estimate', link],
     ['Device', deviceText()],
     ['Screen', `${screen.width}×${screen.height} @${+devicePixelRatio.toFixed(2)}x · window ${innerWidth}×${innerHeight}`],
@@ -723,12 +744,13 @@ async function tick(){
 }
 async function main(){
   $('playerName').textContent = NAME || deviceText() || 'This device';
-  $('wifi').textContent = [SSID && 'Wi-Fi ' + SSID, AP && 'AP ' + AP].filter(Boolean).join(' · ');
+  $('wifi').textContent = [SSID && 'Wi-Fi ' + SSID, SEC, AP && 'AP ' + AP].filter(Boolean).join(' · ');
   buildTiles(); buildTargets(); renderLog(); render();
   const clock = () => { $('clock').textContent = new Date().toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); };
   clock(); setInterval(clock, 1000);
   new ResizeObserver(() => render()).observe(document.body);
-  await probeConnection(); fetchMeta(); setInterval(fetchMeta, 10*60e3);
+  fetchMeta(); setInterval(fetchMeta, 10*60e3);
+  if (UPLOAD) pickUploadServer();
   await Promise.all(targets.map(ping));            // warm-up: DNS + TLS, not counted
   if (SPEED_EVERY){
     nextSpeedAt = Date.now() + 20e3;

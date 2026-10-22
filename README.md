@@ -11,8 +11,8 @@ OptiSigns players). Laid out for a 16:9 screen. Add it in OptiSigns as a **Websi
 - **Tiles:** latency, jitter, packet loss, download, upload, latency under load (bufferbloat), availability.
 - **Latency chart:** last 60 min per test server, with an availability bar (green = all answered, yellow = some lost, red = none) and speed-test periods shaded.
 - **Test servers:** live ms, 2-minute sparkline, average, p95 and loss for each server.
-- **Speed tests:** download and upload bars over the last hour (Cloudflare speed endpoints, test size adapts to about 4 s).
-- **Network & device:** ISP, public IP, location, Cloudflare edge, DNS/TCP/TLS setup time, browser link info, device, screen.
+- **Speed tests:** download and upload bars over the last hour. Download reads `test/blob.bin` from this site (GitHub Pages CDN, 3 streams, 5 s or 25 MB). Upload goes to the fastest LibreSpeed server run by Sharktech (Denver/Chicago/Los Angeles/Las Vegas, 2 streams, size adapts to about 4 s). Nothing depends on Cloudflare.
+- **Network & device:** ISP, public IP, location (ipinfo.io, fallback ipwho.is), speed servers, browser estimate, device, screen.
 - **Events:** drops, recoveries, quality changes, speed results and public IP changes.
 
 Test servers: Google, Apple (captive-portal check) and OptiSigns. The connection is graded on the best server, so one slow or blocked server shows in its own row without turning the status poor. Every lost ping is logged as a timeout or an error.
@@ -24,7 +24,7 @@ Every page load starts fresh; nothing is kept between reloads.
 | Option | Example | Meaning |
 |---|---|---|
 | `name` | `name=Lobby%20X5M` | Label at the top right |
-| `ssid`, `ap` | `ssid=AAHW-5G&ap=W-3` | Wi-Fi network and AP under test (labels only; a web page can't read them) |
+| `ssid`, `sec`, `ap` | `ssid=AAHW-5G&sec=WPA3&ap=W-3` | Wi-Fi network, security type and AP under test, shown at the top (labels only; a web page can't read SSID, security, signal or channel) |
 | `interval` | `interval=1000` | ms between pings (default 2000, min 500) |
 | `timeout` | `timeout=3000` | ms before a ping counts as lost |
 | `range` | `range=120` | minutes shown on the charts (default 60, 5-240) |
@@ -34,7 +34,7 @@ Every page load starts fresh; nothing is kept between reloads.
 | `targets` | `targets=Google\|https://www.google.com/generate_204,CF\|https://www.cloudflare.com/cdn-cgi/trace` | up to 6 https test servers |
 | `theme` | `theme=light` | light colors |
 
-Example: `https://ahmetoptisigns.github.io/netmon/?name=Bench%20X5M&ssid=AAHW-5G&ap=W-3`
+Example: `https://ahmetoptisigns.github.io/netmon/?name=Bench%20X5M&ssid=AAHW-5G&sec=WPA3&ap=W-3`
 
 Press **S** or tap the Download/Upload tile to run a speed test now.
 
