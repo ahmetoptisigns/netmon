@@ -173,7 +173,8 @@ const KEY = 'netmon:v2';
 const COLORS = ['#5cc8ff','#ff9ec7','#ffd27a','#7ee0d0','#c49bff','#9fb4ff'];
 const DEFAULT_TARGETS = [
   {name:'Google',     url:'https://www.google.com/generate_204'},
-  {name:'Cloudflare', url:'https://1.1.1.1/cdn-cgi/trace'},
+  // a hostname, not 1.1.1.1: many firewalls block 1.1.1.1 because it is also a public DNS resolver
+  {name:'Cloudflare', url:'https://www.cloudflare.com/cdn-cgi/trace'},
   {name:'OptiSigns',  url:'https://app.optisigns.com/favicon.ico', method:'HEAD'}
 ];
 function parseTargets(){
@@ -631,7 +632,7 @@ async function fetchMeta(){
     net.http = m.httpProtocol || '';
   } catch(e){
     try {
-      const txt = await (await fetch('https://1.1.1.1/cdn-cgi/trace', {cache:'no-store', credentials:'omit'})).text();
+      const txt = await (await fetch('https://www.cloudflare.com/cdn-cgi/trace', {cache:'no-store', credentials:'omit'})).text();
       const o = Object.fromEntries(txt.trim().split('\n').map(l => l.split('=')));
       net.ip = o.ip || net.ip; net.loc = o.loc || '–'; net.edge = o.colo || '–'; net.http = o.http || '';
       if (net.isp === '…') net.isp = 'Unavailable';
