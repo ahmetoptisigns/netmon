@@ -15,7 +15,9 @@ OptiSigns players). Laid out for a 16:9 screen. Add it in OptiSigns as a **Websi
 - **Network & device:** ISP, public IP, location, Cloudflare edge, DNS/TCP/TLS setup time, browser link info, device, screen.
 - **Events:** drops, recoveries, quality changes, speed results and public IP changes.
 
-History is saved in the browser, so a page reload (for example a playlist loop) keeps the last hour.
+Test servers: Google, Apple (captive-portal check) and OptiSigns. The connection is graded on the best server, so one slow or blocked server shows in its own row without turning the status poor. Every lost ping is logged as a timeout or an error.
+
+Every page load starts fresh; nothing is kept between reloads.
 
 ## URL options
 
@@ -31,7 +33,6 @@ History is saved in the browser, so a page reload (for example a playlist loop) 
 | `upload` | `upload=0` | skip the upload test |
 | `targets` | `targets=Google\|https://www.google.com/generate_204,CF\|https://www.cloudflare.com/cdn-cgi/trace` | up to 6 https test servers |
 | `theme` | `theme=light` | light colors |
-| `reset` | `reset=1` | forget saved history |
 
 Example: `https://ahmetoptisigns.github.io/netmon/?name=Bench%20X5M&ssid=AAHW-5G&ap=W-3`
 

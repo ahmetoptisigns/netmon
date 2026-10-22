@@ -153,7 +153,6 @@ canvas{display:block;width:100%;flex:1;min-height:0}
   &targets=Google|https://www.google.com/generate_204,Router|https://...
                             up to 6; must be https (the page is served over https)
   &theme=light
-  &reset=1                  forget history saved by a previous load
   Keys: S = run a speed test now. Tap the Download or Upload tile does the same.
 */
 const P = new URLSearchParams(location.search);
@@ -168,13 +167,12 @@ const RANGE = clamp(num('range', 60), 5, 240) * 60e3;
 const SPEED_EVERY = clamp(num('speed', 300), 0, 86400);
 const FIXED_MB = P.has('speedmb') ? clamp(num('speedmb', 10), .5, 200) : null;
 const UPLOAD = P.get('upload') !== '0';
-const KEY = 'netmon:v2';
 
 const COLORS = ['#5cc8ff','#ff9ec7','#ffd27a','#7ee0d0','#c49bff','#9fb4ff'];
 const DEFAULT_TARGETS = [
   {name:'Google',     url:'https://www.google.com/generate_204'},
-  // a hostname, not 1.1.1.1: many firewalls block 1.1.1.1 because it is also a public DNS resolver
-  {name:'Cloudflare', url:'https://www.cloudflare.com/cdn-cgi/trace'},
+  // Apple's captive-portal check (Akamai): tiny, fast and rarely firewalled; 1.1.1.1 and cloudflare.com often are
+  {name:'Apple',      url:'https://www.apple.com/library/test/success.html'},
   {name:'OptiSigns',  url:'https://app.optisigns.com/favicon.ico', method:'HEAD'}
 ];
 function parseTargets(){
@@ -600,7 +598,7 @@ async function speedTest(){
   if (rec.down == null && rec.up == null){ speeds.splice(speeds.indexOf(rec), 1); logEvent('poor', 'Speed test failed'); }
   else logEvent('info', `Speed test: ↓ ${f1(rec.down)} · ↑ ${f1(rec.up)} Mbps` + (rec.loaded != null ? ` · +${Math.round(rec.loaded)} ms under load` : ''));
   if (SPEED_EVERY) nextSpeedAt = Date.now() + SPEED_EVERY*1000;
-  save(); render();
+  render();
 }
 addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') speedTest(); });
 
@@ -683,29 +681,8 @@ function renderInfo(){
   });
 }
 
-/* ---------- Save / restore (survives a page reload, e.g. a playlist loop) ---------- */
-function save(){
-  try {
-    localStorage.setItem(KEY, JSON.stringify({
-      v: 2, at: Date.now(), urls: targets.map(t => t.url).join(','),
-      s: targets.map(t => t.s.map(o => [o.t, o.v != null ? Math.round(o.v) : o.why === 'E' ? -2 : -1])),
-      ok: okS.map(o => [o.t, +o.r.toFixed(3)]),
-      speeds: speeds.filter(s => s.t1), events: events.slice(0, 60), session
-    }));
-  } catch(e){}
-}
-function restore(){
-  if (P.get('reset') === '1'){ try { localStorage.removeItem(KEY); } catch(e){} return; }
-  let d = null; try { d = JSON.parse(localStorage.getItem(KEY)); } catch(e){}
-  if (!d || d.v !== 2 || Date.now() - d.at > RANGE || d.urls !== targets.map(t => t.url).join(',')) return;
-  try {
-    targets.forEach((t, i) => { t.s = (d.s[i] || []).map(([tt, v]) => v >= 0 ? {t: tt, v} : {t: tt, v: null, why: v === -2 ? 'E' : 'T'}); });
-    okS = d.ok.map(([tt, r]) => ({t: tt, r}));
-    speeds.push(...d.speeds); events = d.events || []; session = {...session, ...d.session};
-    logEvent('info', `Page reloaded, history restored (gap ${fmtDur(Date.now() - d.at)})`);
-  } catch(e){ targets.forEach(t => t.s = []); okS = []; speeds.length = 0; events = []; }
-}
-addEventListener('pagehide', save);
+// Every load starts fresh. Earlier versions kept history in localStorage; clear it.
+try { localStorage.removeItem('netmon:v2'); } catch(e){}
 
 /* ---------- Main loop ---------- */
 function render(){
@@ -747,11 +724,9 @@ async function tick(){
 async function main(){
   $('playerName').textContent = NAME || deviceText() || 'This device';
   $('wifi').textContent = [SSID && 'Wi-Fi ' + SSID, AP && 'AP ' + AP].filter(Boolean).join(' · ');
-  restore();
   buildTiles(); buildTargets(); renderLog(); render();
   const clock = () => { $('clock').textContent = new Date().toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); };
   clock(); setInterval(clock, 1000);
-  setInterval(save, 30e3);
   new ResizeObserver(() => render()).observe(document.body);
   await probeConnection(); fetchMeta(); setInterval(fetchMeta, 10*60e3);
   await Promise.all(targets.map(ping));            // warm-up: DNS + TLS, not counted
