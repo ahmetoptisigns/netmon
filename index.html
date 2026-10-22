@@ -174,7 +174,7 @@ const COLORS = ['#5cc8ff','#ff9ec7','#ffd27a','#7ee0d0','#c49bff','#9fb4ff'];
 const DEFAULT_TARGETS = [
   {name:'Google',     url:'https://www.google.com/generate_204'},
   {name:'Cloudflare', url:'https://1.1.1.1/cdn-cgi/trace'},
-  {name:'OptiSigns',  url:'https://app.optisigns.com/', method:'HEAD'}
+  {name:'OptiSigns',  url:'https://app.optisigns.com/favicon.ico', method:'HEAD'}
 ];
 function parseTargets(){
   const raw = P.get('targets'); if (!raw) return DEFAULT_TARGETS;
@@ -254,15 +254,23 @@ async function ping(t){
   finally { clearTimeout(timer); }
 }
 
-/* ---------- Current numbers ---------- */
+/* ---------- Current numbers ----------
+  The connection is graded on the BEST server for each number. A Wi-Fi problem
+  hits every server at once, so the best one still shows it; a single slow or
+  blocked server (heavy page, filtered 1.1.1.1) shows in its own row instead of
+  dragging the whole status down. Samples taken while a speed test saturates the
+  link are left out here; that rise is reported as "Latency under load". */
+const SETTLE = 3000;   // ms after a speed test before samples count again
+function inTest(t){ return speeds.some(s => t >= s.t && t <= (s.t1 || Infinity) + SETTLE); }
+const quiet = a => speeds.length ? a.filter(s => !inTest(s.t)) : a;
+const best = a => { a = a.filter(x => x != null); return a.length ? Math.min(...a) : null; };
 function current(now = Date.now()){
-  const per = targets.map(t => stats(since(t.s, 30e3, now)));
-  const ok30 = since(okS, 30e3, now), ok60 = since(okS, 60e3, now), okR = since(okS, RANGE, now);
-  const lossOf = a => a.length ? 1 - a.reduce((x,o) => x + o.r, 0)/a.length : null;
-  const allR = []; targets.forEach(t => { for (const s of since(t.s, RANGE, now)) if (s.v != null) allR.push(s.v); });
+  const over = ms => targets.map(t => stats(quiet(since(t.s, ms, now))));
+  const p30 = over(30e3), p60 = over(60e3), pR = over(RANGE);
   return {
-    lat: median(per.map(r => r.avg)), jit: median(per.map(r => r.jit)),
-    loss30: lossOf(ok30), loss60: lossOf(ok60), lossR: lossOf(okR), p95R: pct(allR, .95)
+    lat: best(p30.map(r => r.avg)), jit: best(p30.map(r => r.jit)),
+    loss30: best(p30.map(r => r.loss)), loss60: best(p60.map(r => r.loss)),
+    lossR: best(pR.map(r => r.loss)), p95R: best(pR.map(r => r.p95))
   };
 }
 
@@ -277,8 +285,11 @@ let status = null, candidate = null, candidateCount = 0, statusSince = Date.now(
 
 function evaluate(okNow, cur){
   if (okNow === 0) return {s:'OFFLINE', why:'None of the test servers are answering'};
+  if (speedRunning || inTest(Date.now())) return {s: status || 'GOOD', why: 'Speed test running, link is busy on purpose (see Latency under load)'};
   const loss = cur.loss30 || 0, lat = cur.lat || 0, jit = cur.jit || 0;
-  const why = `${Math.round(lat)} ms latency · ${pctTxt(loss)} loss · ${Math.round(jit)} ms jitter  (last 30 s)`;
+  const down = targets.filter(t => t.s.length >= 5 && t.s.slice(-5).every(s => s.v == null)).map(t => t.name);
+  const why = `${Math.round(lat)} ms latency · ${pctTxt(loss)} loss · ${Math.round(jit)} ms jitter  (best server, last 30 s)` +
+              (down.length ? ` · ${down.join(', ')} not answering` : '');
   if (loss > .10 || lat > 400 || jit > 150) return {s:'POOR', why};
   if (loss > .02 || lat > 150 || jit > 50)  return {s:'FAIR', why};
   return {s:'GOOD', why};
@@ -367,8 +378,8 @@ function renderTiles(cur){
   const ls = lastSpeed(), inR = speeds.filter(s => s.t1 && s.t >= Date.now() - RANGE);
   const avgOf = k => { const v = inR.map(s => s[k]).filter(x => x != null); return v.length ? v.reduce((a,b) => a+b, 0)/v.length : null; };
   const rangeTxt = `${Math.round(RANGE/60e3)} min`;
-  setTile('lat', f0(cur.lat), 'ms', `p95 ${rangeTxt}: ${f0(cur.p95R)} ms`, grade(cur.lat, 80, 150));
-  setTile('jit', f0(cur.jit), 'ms', 'last 30 s', grade(cur.jit, 20, 50));
+  setTile('lat', f0(cur.lat), 'ms', `fastest server · p95 ${rangeTxt}: ${f0(cur.p95R)}`, grade(cur.lat, 80, 150));
+  setTile('jit', f0(cur.jit), 'ms', 'steadiest server · 30 s', grade(cur.jit, 20, 50));
   setTile('loss', pctTxt(cur.loss60), '', `last 1 min · ${rangeTxt}: ${pctTxt(cur.lossR)}`, grade(cur.loss60, .005, .02));
   const nextTxt = speedRunning ? 'testing now…' : !SPEED_EVERY ? 'auto tests off · tap to run' : nextSpeedAt ? `next at ${hm(nextSpeedAt)}` : '';
   setTile('down', speedRunning && phase === 'down' ? '…' : f1(ls?.down), 'Mbps', inR.length > 1 ? `avg ${f1(avgOf('down'))} · ${nextTxt}` : nextTxt, grade(ls?.down, 25, 10, true));
@@ -580,9 +591,9 @@ async function speedTest(){
   }
   rec.t1 = Date.now(); phase = null; speedRunning = false;
   // How much did latency rise while the link was saturated? (bufferbloat)
-  const during = [];
-  targets.forEach(t => { for (const s of t.s) if (s.t >= t0 && s.t <= rec.t1 && s.v != null) during.push(s.v); });
-  if (during.length && idle != null) rec.loaded = Math.max(0, pct(during, .5) - idle);
+  // same best-server basis as the idle number
+  const during = best(targets.map(t => median(t.s.filter(s => s.t >= t0 && s.t <= rec.t1).map(s => s.v))));
+  if (during != null && idle != null) rec.loaded = Math.max(0, during - idle);
   if (rec.down == null && rec.up == null){ speeds.splice(speeds.indexOf(rec), 1); logEvent('poor', 'Speed test failed'); }
   else logEvent('info', `Speed test: ↓ ${f1(rec.down)} · ↑ ${f1(rec.up)} Mbps` + (rec.loaded != null ? ` · +${Math.round(rec.loaded)} ms under load` : ''));
   if (SPEED_EVERY) nextSpeedAt = Date.now() + SPEED_EVERY*1000;
