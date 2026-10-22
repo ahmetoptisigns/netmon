@@ -458,8 +458,8 @@ function drawLatency(now){
     ctx.fillRect(A.X(a), A.padT, Math.max(rem*.4, A.X(b) - A.X(a)), A.ph);
   });
   axes(ctx, A, ymax, fs, rem);
-  // bucket into ~3px columns
-  const nb = Math.max(30, Math.floor(A.pw/3)), bs = span/nb, bw = A.pw/nb;
+  // bucket into ~3px columns, never shorter than 1.5 pings so every bucket has data and lines stay joined
+  const nb = Math.max(30, Math.min(Math.floor(A.pw/3), Math.floor(span/(INTERVAL*1.5)))), bs = span/nb, bw = A.pw/nb;
   const okB = Array.from({length: nb}, () => [0,0]);
   for (const o of okS){ const i = Math.floor((o.t - t0)/bs); if (i >= 0 && i < nb){ okB[i][0] += o.r; okB[i][1]++; } }
   const cG = cssv('--good'), cF = cssv('--fair'), cB = cssv('--bad');
