@@ -262,7 +262,8 @@ async function ping(t){
   dragging the whole status down. Samples taken while a speed test saturates the
   link are left out here; that rise is reported as "Latency under load". */
 const SETTLE = 3000;   // ms after a speed test before samples count again
-function inTest(t){ return speeds.some(s => t >= s.t && t <= (s.t1 || Infinity) + SETTLE); }
+// a ping is stamped when it starts, so one sent up to TIMEOUT before the test can still be measured during it
+function inTest(t){ return speeds.some(s => t >= s.t - TIMEOUT && t <= (s.t1 || Infinity) + SETTLE); }
 const quiet = a => speeds.length ? a.filter(s => !inTest(s.t)) : a;
 const best = a => { a = a.filter(x => x != null); return a.length ? Math.min(...a) : null; };
 function current(now = Date.now()){
