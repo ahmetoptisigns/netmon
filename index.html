@@ -145,7 +145,7 @@ canvas{display:block;width:100%;flex:1;min-height:0}
   &ssid=AAHW-5G&ap=W-3      Wi-Fi network / access point under test (labels only,
                             a web page cannot read the SSID or signal itself)
   &interval=2000            ms between pings (min 500)
-  &timeout=3000             ms before a ping counts as lost
+  &timeout=4000             ms before a ping counts as lost
   &range=60                 minutes shown on the charts (5-240)
   &speed=300                seconds between speed tests (0 = off)
   &speedmb=10               fixed download test size in MB (default: adapts to ~4 s per test)
@@ -163,7 +163,7 @@ if (P.get('theme') === 'light') document.documentElement.dataset.theme = 'light'
 const NAME = P.get('name') || '';
 const SSID = P.get('ssid') || '', AP = P.get('ap') || '';
 const INTERVAL = clamp(num('interval', 2000), 500, 60000);
-const TIMEOUT = clamp(num('timeout', 3000), 300, 30000);
+const TIMEOUT = clamp(num('timeout', 4000), 300, 30000);   // same as Windows ping
 const RANGE = clamp(num('range', 60), 5, 240) * 60e3;
 const SPEED_EVERY = clamp(num('speed', 300), 0, 86400);
 const FIXED_MB = P.has('speedmb') ? clamp(num('speedmb', 10), .5, 200) : null;
@@ -242,15 +242,16 @@ try { performance.addEventListener('resourcetimingbufferfull', () => performance
   Browsers can't send ICMP, so each "ping" is a tiny HTTPS request with a
   cache-buster. After the first request the connection is reused, so the
   time is close to a real round trip. */
+// Returns {v: ms} or {v: null, why: 'T' (no reply within TIMEOUT) | 'E' (failed at once: blocked, refused, adapter down)}
 async function ping(t){
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+  const ctrl = new AbortController(); let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, TIMEOUT);
   const u = t.url + (t.url.includes('?') ? '&' : '?') + '_=' + rnd();
   const s = performance.now();
   try {
     await fetch(u, {mode:'no-cors', cache:'no-store', method:t.method, signal:ctrl.signal, credentials:'omit'});
-    return performance.now() - s;
-  } catch(e){ return null; }
+    return {v: performance.now() - s};
+  } catch(e){ return {v: null, why: timedOut ? 'T' : 'E'}; }
   finally { clearTimeout(timer); }
 }
 
@@ -645,6 +646,15 @@ function deviceText(){
   const br = cr ? 'Chromium ' + cr[1] : /Version\/\d+.*Safari/.test(ua) ? 'Safari' : '';
   return [os, br].filter(Boolean).join(' · ');
 }
+function lostText(now){
+  const parts = targets.map(t => {
+    const lost = since(t.s, RANGE, now).filter(s => s.v == null);
+    if (!lost.length) return null;
+    const T = lost.filter(s => s.why !== 'E').length, E = lost.length - T;
+    return `${t.name} ${[T && T + ' timeout', E && E + ' error'].filter(Boolean).join(' + ')}`;
+  }).filter(Boolean);
+  return parts.length ? parts.join(' · ') : `None in ${Math.round(RANGE/60e3)} min`;
+}
 function renderInfo(){
   const now = Date.now(), c = navigator.connection;
   const link = c ? [c.type && c.type !== 'unknown' ? c.type : '', c.effectiveType, c.downlink != null ? `~${c.downlink} Mbps` : '', c.rtt != null ? `~${c.rtt} ms` : ''].filter(Boolean).join(', ') : 'Not reported';
@@ -660,6 +670,7 @@ function renderInfo(){
     ['Screen', `${screen.width}×${screen.height} @${+devicePixelRatio.toFixed(2)}x · window ${innerWidth}×${innerHeight}`],
     ['Status for', status ? fmtDur(now - statusSince) : '–'],
     ['Longest outage', longest ? fmtDur(longest) : 'None'],
+    ['Lost pings', lostText(now)],
     ['Monitoring', `${fmtDur(now - session.start)} since ${hm(session.start)}`],
     ['Test data used', fmtBytes(session.bytes)],
   ];
@@ -675,7 +686,7 @@ function save(){
   try {
     localStorage.setItem(KEY, JSON.stringify({
       v: 2, at: Date.now(), urls: targets.map(t => t.url).join(','),
-      s: targets.map(t => t.s.map(o => [o.t, o.v == null ? -1 : Math.round(o.v)])),
+      s: targets.map(t => t.s.map(o => [o.t, o.v != null ? Math.round(o.v) : o.why === 'E' ? -2 : -1])),
       ok: okS.map(o => [o.t, +o.r.toFixed(3)]),
       speeds: speeds.filter(s => s.t1), events: events.slice(0, 60), session
     }));
@@ -686,7 +697,7 @@ function restore(){
   let d = null; try { d = JSON.parse(localStorage.getItem(KEY)); } catch(e){}
   if (!d || d.v !== 2 || Date.now() - d.at > RANGE || d.urls !== targets.map(t => t.url).join(',')) return;
   try {
-    targets.forEach((t, i) => { t.s = (d.s[i] || []).map(([tt, v]) => ({t: tt, v: v < 0 ? null : v})); });
+    targets.forEach((t, i) => { t.s = (d.s[i] || []).map(([tt, v]) => v >= 0 ? {t: tt, v} : {t: tt, v: null, why: v === -2 ? 'E' : 'T'}); });
     okS = d.ok.map(([tt, r]) => ({t: tt, r}));
     speeds.push(...d.speeds); events = d.events || []; session = {...session, ...d.session};
     logEvent('info', `Page reloaded, history restored (gap ${fmtDur(Date.now() - d.at)})`);
@@ -699,11 +710,32 @@ function render(){
   const now = Date.now(), cur = current(now);
   renderTiles(cur); renderTargets(now); drawLatency(now); drawSpeed(now); renderInfo();
 }
+// Per-server lost-ping streaks go to the event log, so every loss can be traced
+function noteLoss(t, r){
+  if (r.v == null){
+    if (!t.streak){ t.streak = {n: 0, T: 0, E: 0, at: Date.now()};
+      logEvent(r.why === 'T' ? 'fair' : 'poor', `${t.name}: ${r.why === 'T' ? `no reply in ${TIMEOUT/1000} s` : 'request failed at once (blocked, refused or adapter down)'}`); }
+    t.streak.n++; t.streak[r.why]++;
+  } else if (t.streak){
+    const k = t.streak; t.streak = null;
+    logEvent('info', `${t.name} answering again · ${k.n} lost (${k.T} timeout, ${k.E} error) over ${fmtDur(Date.now() - k.at)}`);
+  }
+}
+let hiddenSince = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden){ hiddenSince = Date.now(); logEvent('info', 'Paused: page hidden (browsers slow down hidden tabs)'); }
+  else if (hiddenSince){ logEvent('info', `Resumed after ${fmtDur(Date.now() - hiddenSince)} hidden`); hiddenSince = null; }
+});
 async function tick(){
   const now = Date.now();
   const res = await Promise.all(targets.map(ping));
+  if (document.hidden) return;   // a result measured while hidden isn't trustworthy
   let ok = 0;
-  res.forEach((v, i) => { const t = targets[i]; t.last = v; if (v != null) ok++; t.s.push({t: now, v}); trim(t.s, now); });
+  res.forEach((r, i) => {
+    const t = targets[i]; t.last = r.v; if (r.v != null) ok++;
+    t.s.push(r.v == null ? {t: now, v: null, why: r.why} : {t: now, v: r.v}); trim(t.s, now);
+    noteLoss(t, r);
+  });
   okS.push({t: now, r: ok/targets.length}); trim(okS, now);
   session.ticks++; if (ok) session.up++;
   trim(speeds, now);
@@ -729,6 +761,7 @@ async function main(){
     const s = Date.now();
     await tick();
     await sleep(Math.max(0, INTERVAL - (Date.now() - s)));
+    while (document.hidden) await sleep(1000);
   }
 }
 main();
