@@ -4,74 +4,96 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Network Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1720'/%3E%3Cpath d='M4 22h5l3-10 4 14 4-18 3 14h5' fill='none' stroke='%233ddc97' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
 <style>
 :root{
-  --bg:#0f1a24; --panel:#152431; --panel2:#1b2e3e; --line:#26394a;
+  --bg:#0d1720; --panel:#142230; --panel2:#1a2c3c; --line:#24384a;
   --text:#e8eef3; --muted:#8aa0b2;
   --good:#3ddc97; --fair:#f5c542; --poor:#ff8a3d; --bad:#ff4d5e;
+  --down:#5cc8ff; --up:#c49bff; --shade:rgba(196,155,255,.10);
   --sans:"Barlow",system-ui,"Segoe UI",Roboto,sans-serif;
   --cond:"Barlow Condensed","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
   color-scheme:dark;
+  /* 1rem = 10px on a 1920x1080 screen, scales with the screen, never overflows 16:9 */
+  font-size:min(.926vh,.521vw);
 }
 :root[data-theme="light"]{
-  --bg:#eef2f5; --panel:#ffffff; --panel2:#f5f8fa; --line:#d6dee5;
-  --text:#102030; --muted:#5a6d7d; color-scheme:light;
+  --bg:#eef2f5; --panel:#ffffff; --panel2:#f3f6f9; --line:#d6dee5;
+  --text:#102030; --muted:#5a6d7d; --shade:rgba(120,80,200,.08); color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
-body{display:grid;grid-template-rows:auto auto minmax(0,1fr) minmax(0,30vh);gap:1.4vmin;padding:1.6vmin}
+body{
+  display:grid;gap:1.2rem;padding:1.4rem;
+  grid-template-columns:1fr 1fr 1fr;
+  grid-template-rows:auto auto minmax(0,1.25fr) minmax(0,1fr);
+  grid-template-areas:"band band band" "kpi kpi kpi" "lat lat tgt" "spd info log";
+}
 .num{font-family:var(--cond);font-variant-numeric:tabular-nums}
+.panel{background:var(--panel);border-radius:1rem;padding:1.2rem 1.6rem;min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.panel h3{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;font-size:1.7rem;font-weight:600;margin-bottom:.8rem}
+.panel h3 span{font-size:1.4rem;font-weight:400;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+canvas{display:block;width:100%;flex:1;min-height:0}
 
 /* Status band */
-#band{display:flex;align-items:center;gap:2.4vmin;padding:1.6vmin 2.4vmin;border-radius:1.2vmin;background:var(--st,var(--muted));color:#06121b;transition:background .4s}
-#stateWord{font-family:var(--cond);font-weight:700;font-size:7vmin;line-height:1}
-#stateWhy{font-size:2.2vmin;font-weight:500;opacity:.85}
-#bandRight{margin-left:auto;text-align:right}
-#playerName{font-family:var(--cond);font-weight:700;font-size:3.4vmin;line-height:1.1}
-#clock{font-size:2.2vmin;font-weight:500}
+#band{grid-area:band;display:flex;align-items:center;gap:2.4rem;padding:1.4rem 2.4rem;border-radius:1rem;background:var(--st,var(--muted));color:#06121b;transition:background .4s}
+#stateWord{font-family:var(--cond);font-weight:700;font-size:6rem;line-height:1}
+#stateWhy{font-size:2rem;font-weight:500;opacity:.85;margin-top:.3rem}
+#bandRight{margin-left:auto;text-align:right;line-height:1.25}
+#playerName{font-family:var(--cond);font-weight:700;font-size:3.2rem}
+#wifi,#clock{font-size:1.9rem;font-weight:500}
+#wifi:empty{display:none}
 
-/* Target cards */
-#targets{display:grid;grid-template-columns:repeat(auto-fit,minmax(26vmin,1fr));gap:1.4vmin}
-.card{background:var(--panel);border-radius:1vmin;padding:1.4vmin 1.8vmin;border-left:.6vmin solid var(--c)}
-.card h2{font-size:2vmin;font-weight:600;display:flex;justify-content:space-between;gap:1vmin}
-.card h2 span{color:var(--muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.big{font-size:6vmin;font-weight:700;line-height:1.05}
-.big small{font-size:2.4vmin;color:var(--muted);font-weight:500;margin-left:.4vmin}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:.6vmin;margin-top:.4vmin}
-.stats div{font-size:1.5vmin;color:var(--muted)}
-.stats b{display:block;font-family:var(--cond);font-size:2.4vmin;font-weight:500;color:var(--text)}
-.fail .big{color:var(--bad)}
+/* KPI tiles */
+#kpi{grid-area:kpi;display:grid;grid-template-columns:repeat(7,1fr);gap:1.2rem}
+.tile{background:var(--panel);border-radius:1rem;padding:1rem 1.6rem 1.2rem;border-top:.5rem solid var(--g,var(--line));min-width:0}
+.tile .lbl{font-size:1.6rem;color:var(--muted);font-weight:500}
+.tile .val{font-family:var(--cond);font-variant-numeric:tabular-nums;font-size:5.2rem;font-weight:700;line-height:1.05;white-space:nowrap}
+.tile .val small{font-size:2rem;color:var(--muted);font-weight:500;margin-left:.4rem}
+.tile .sub{font-size:1.45rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.click{cursor:pointer}
 
-/* Chart */
-#chartWrap{background:var(--panel);border-radius:1vmin;padding:1.2vmin;min-height:0;display:flex;flex-direction:column}
-#chartHead{display:flex;justify-content:space-between;font-size:1.8vmin;color:var(--muted);padding:0 .6vmin .6vmin}
-#chart{flex:1;width:100%;min-height:0;display:block}
+#latWrap{grid-area:lat} #spdWrap{grid-area:spd}
+.legend{display:flex;gap:1.6rem}
+.legend i{display:inline-block;width:1.2rem;height:.5rem;border-radius:.3rem;background:var(--c);margin-right:.5rem;vertical-align:middle}
 
-/* Bottom */
-#bottom{display:grid;grid-template-columns:1fr 1.3fr;gap:1.4vmin;min-height:0}
-.panel{background:var(--panel);border-radius:1vmin;padding:1.4vmin 1.8vmin;min-height:0;overflow:hidden;display:flex;flex-direction:column}
-.panel h3{font-size:1.8vmin;color:var(--muted);font-weight:500;margin-bottom:.8vmin}
-#info{display:grid;grid-template-columns:auto 1fr;gap:.5vmin 2vmin;font-size:1.9vmin;overflow:auto}
+/* Targets */
+#tgtWrap{grid-area:tgt}
+#tgt{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.2fr) repeat(4,auto);column-gap:1.4rem;row-gap:.2rem;align-items:center;align-content:space-evenly;overflow:hidden}
+#tgt .hd{font-size:1.3rem;color:var(--muted);text-align:right}
+#tgt .hd:first-child{text-align:left}
+#tgt .nm{border-left:.5rem solid var(--c);padding:.5rem 0 .5rem 1rem;min-width:0}
+#tgt .nm b{display:block;font-size:1.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tgt .nm span{display:block;font-size:1.3rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tgt canvas{height:6rem;flex:none}
+#tgt .now{font-family:var(--cond);font-size:3.4rem;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+#tgt .now.lost{color:var(--bad)}
+#tgt .st{font-family:var(--cond);font-size:2rem;text-align:right;font-variant-numeric:tabular-nums}
+#tgtNote{margin-top:auto;padding-top:.8rem;font-size:1.3rem;color:var(--muted)}
+
+/* Info + log */
+#infoWrap{grid-area:info}
+#info{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.45rem 1.8rem;font-size:1.65rem;overflow:hidden}
 #info dt{color:var(--muted)}
 #info dd{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#log{list-style:none;font-size:1.8vmin;overflow:auto}
-#log li{display:grid;grid-template-columns:auto auto 1fr;gap:1.2vmin;padding:.45vmin 0;border-bottom:1px solid var(--line);align-items:center}
+#logWrap{grid-area:log}
+#log{list-style:none;font-size:1.6rem;overflow:hidden}
+#log li{display:grid;grid-template-columns:auto auto 1fr;gap:1rem;padding:.4rem 0;border-bottom:1px solid var(--line);align-items:center}
 #log time{color:var(--muted);font-variant-numeric:tabular-nums}
-#log i{width:1.2vmin;height:1.2vmin;border-radius:50%;background:var(--d)}
+#log i{width:1.1rem;height:1.1rem;border-radius:50%;background:var(--d)}
+#log span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #log .empty{display:block;color:var(--muted);border:0}
 
-@media (max-width:820px),(orientation:portrait){
+/* Portrait / narrow screens: stack and scroll */
+@media (max-aspect-ratio:4/3){
+  :root{font-size:min(9px,1.6vw)}
   html,body{overflow:auto;height:auto}
-  body{grid-template-rows:auto;font-size:15px}
-  #stateWord{font-size:44px} #stateWhy,#clock{font-size:14px} #playerName{font-size:20px}
-  #targets{grid-template-columns:1fr}
-  .card h2{font-size:15px} .big{font-size:40px} .big small{font-size:16px}
-  .stats div{font-size:11px} .stats b{font-size:17px}
-  #chartWrap{height:300px} #chartHead,.panel h3{font-size:13px}
-  #bottom{grid-template-columns:1fr} #info,#log{font-size:14px}
-  #log i{width:9px;height:9px}
+  body{grid-template-columns:1fr;grid-template-rows:none;grid-template-areas:"band" "kpi" "lat" "tgt" "spd" "info" "log"}
+  #kpi{grid-template-columns:repeat(auto-fit,minmax(20rem,1fr))}
+  #latWrap,#spdWrap{height:34rem}
+  #band{flex-wrap:wrap}
 }
 @media (prefers-reduced-motion:reduce){#band{transition:none}}
 </style>
@@ -84,49 +106,71 @@ body{display:grid;grid-template-rows:auto auto minmax(0,1fr) minmax(0,30vh);gap:
   </div>
   <div id="bandRight">
     <div id="playerName"></div>
+    <div id="wifi"></div>
     <div id="clock" class="num"></div>
   </div>
 </header>
 
-<section id="targets"></section>
+<section id="kpi"></section>
 
-<section id="chartWrap">
-  <div id="chartHead"><span>Latency history</span><span id="chartRange"></span></div>
-  <canvas id="chart"></canvas>
+<section id="latWrap" class="panel">
+  <h3>Latency <span id="latHead"></span></h3>
+  <canvas id="latChart"></canvas>
 </section>
 
-<section id="bottom">
-  <div class="panel">
-    <h3>This player</h3>
-    <dl id="info"></dl>
-  </div>
-  <div class="panel">
-    <h3>Events</h3>
-    <ul id="log"><li class="empty">No events yet. Drops, recoveries and speed tests show up here.</li></ul>
-  </div>
+<section id="tgtWrap" class="panel">
+  <h3>Test servers <span id="tgtHead"></span></h3>
+  <div id="tgt"></div>
+  <div id="tgtNote">Ping = timed HTTPS request (browsers can't send ICMP). Bar under the chart: green all answered · yellow some lost · red none.</div>
+</section>
+
+<section id="spdWrap" class="panel">
+  <h3>Speed tests <span class="legend"><span><i style="--c:var(--down)"></i>Download</span><span><i style="--c:var(--up)"></i>Upload</span></span></h3>
+  <canvas id="spdChart"></canvas>
+</section>
+
+<section id="infoWrap" class="panel">
+  <h3>Network &amp; device</h3>
+  <dl id="info"></dl>
+</section>
+
+<section id="logWrap" class="panel">
+  <h3>Events <span id="logHead"></span></h3>
+  <ul id="log"><li class="empty">No events yet. Drops, recoveries and speed tests show up here.</li></ul>
 </section>
 
 <script>
 /* ---------- Config via URL ----------
-  ?name=Lobby%20X5M         label shown top-right
+  ?name=Lobby%20X5M         label shown top-right (default: from the browser)
+  &ssid=AAHW-5G&ap=W-3      Wi-Fi network / access point under test (labels only,
+                            a web page cannot read the SSID or signal itself)
   &interval=2000            ms between pings (min 500)
   &timeout=3000             ms before a ping counts as lost
-  &window=300               samples kept on the graph
-  &speed=300                seconds between download tests (0 = off)
-  &speedmb=5                download test size in MB
+  &range=60                 minutes shown on the charts (5-240)
+  &speed=300                seconds between speed tests (0 = off)
+  &speedmb=10               fixed download test size in MB (default: adapts to ~4 s per test)
+  &upload=0                 skip the upload test
   &targets=Google|https://www.google.com/generate_204,Router|https://...
+                            up to 6; must be https (the page is served over https)
   &theme=light
+  &reset=1                  forget history saved by a previous load
+  Keys: S = run a speed test now. Tap the Download or Upload tile does the same.
 */
 const P = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(P.get(k)); return isFinite(v) ? v : d; };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 if (P.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
 const NAME = P.get('name') || '';
-const INTERVAL = Math.max(500, +P.get('interval') || 2000);
-const TIMEOUT = Math.max(300, +P.get('timeout') || 3000);
-const WINDOW = Math.min(3000, Math.max(30, +P.get('window') || 300));
-const SPEED_EVERY = P.has('speed') ? Math.max(0, +P.get('speed')) : 300;
-const SPEED_BYTES = Math.round((+P.get('speedmb') || 5) * 1e6);
+const SSID = P.get('ssid') || '', AP = P.get('ap') || '';
+const INTERVAL = clamp(num('interval', 2000), 500, 60000);
+const TIMEOUT = clamp(num('timeout', 3000), 300, 30000);
+const RANGE = clamp(num('range', 60), 5, 240) * 60e3;
+const SPEED_EVERY = clamp(num('speed', 300), 0, 86400);
+const FIXED_MB = P.has('speedmb') ? clamp(num('speedmb', 10), .5, 200) : null;
+const UPLOAD = P.get('upload') !== '0';
+const KEY = 'netmon:v2';
 
-const COLORS = ['#5cc8ff','#b58cff','#ff7ab6','#3ddc97','#f5c542','#ff8a3d'];
+const COLORS = ['#5cc8ff','#ff9ec7','#ffd27a','#7ee0d0','#c49bff','#9fb4ff'];
 const DEFAULT_TARGETS = [
   {name:'Google',     url:'https://www.google.com/generate_204'},
   {name:'Cloudflare', url:'https://1.1.1.1/cdn-cgi/trace'},
@@ -141,19 +185,22 @@ function parseTargets(){
   });
 }
 const targets = parseTargets().slice(0,6).map((t,i) => ({
-  ...t, method: t.method || 'GET', color: COLORS[i % COLORS.length],
-  hist: [], sent: 0, lost: 0, last: null
+  ...t, method: t.method || 'GET', color: COLORS[i % COLORS.length], s: [], last: null
 }));
-const okHist = [];          // per tick: fraction of targets that answered
-const startedAt = Date.now();
-let ticksTotal = 0, ticksUp = 0;
+let okS = [];               // per tick: {t, r} r = fraction of targets that answered
+const speeds = [];          // {t, t1, down, up, idle, loaded}
+let session = {start: Date.now(), ticks: 0, up: 0, outages: 0, downtime: 0, longest: 0, bytes: 0};
 
 /* ---------- Helpers ---------- */
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const push = (arr, v, max = WINDOW) => { arr.push(v); if (arr.length > max) arr.shift(); };
+const rnd = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 const pad = n => String(n).padStart(2,'0');
-const hms = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const hms = d => { d = new Date(d); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const hm = d => { d = new Date(d); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const f0 = x => x == null ? '–' : String(Math.round(x));
+const f1 = x => x == null ? '–' : x >= 100 ? String(Math.round(x)) : x.toFixed(1);
+const pctTxt = x => x == null ? '–' : (x*100).toFixed(x > 0 && x < .1 ? 1 : 0) + '%';
 function fmtDur(ms){
   const s = Math.round(ms/1000);
   if (s < 60) return s + 's';
@@ -162,18 +209,34 @@ function fmtDur(ms){
   if (h) return `${h}h ${m%60}m`;
   return `${m}m ${s%60}s`;
 }
-function stats(arr){
-  const v = arr.filter(x => x != null);
-  if (!v.length) return {avg:null,min:null,max:null,jit:null,loss: arr.length ? 1 : 0};
-  let sum = 0, min = Infinity, max = 0, jsum = 0, jn = 0;
-  for (let i = 0; i < arr.length; i++){
-    const x = arr[i]; if (x == null) continue;
-    sum += x; if (x < min) min = x; if (x > max) max = x;
-    if (i && arr[i-1] != null){ jsum += Math.abs(x - arr[i-1]); jn++; }
+function fmtBytes(b){ return b >= 1e9 ? (b/1e9).toFixed(2) + ' GB' : Math.round(b/1e6) + ' MB'; }
+function pct(vals, p){ if (!vals.length) return null; const a = vals.slice().sort((x,y) => x-y); return a[Math.min(a.length-1, Math.floor(p*a.length))]; }
+function since(arr, ms, now = Date.now()){ const cut = now - ms; let i = arr.length; while (i > 0 && arr[i-1].t >= cut) i--; return arr.slice(i); }
+function trim(arr, now){ const cut = now - RANGE - 60e3; let i = 0; while (i < arr.length && arr[i].t < cut) i++; if (i) arr.splice(0, i); }
+function stats(samples){
+  const vals = []; let jsum = 0, jn = 0, prev = null;
+  for (const s of samples){
+    if (s.v == null){ prev = null; continue; }
+    vals.push(s.v);
+    if (prev != null){ jsum += Math.abs(s.v - prev); jn++; }
+    prev = s.v;
   }
-  return {avg: sum/v.length, min, max, jit: jn ? jsum/jn : 0, loss: 1 - v.length/arr.length};
+  const n = vals.length;
+  return {n, avg: n ? vals.reduce((a,b) => a+b, 0)/n : null, p95: pct(vals, .95),
+          jit: jn ? jsum/jn : null, loss: samples.length ? 1 - n/samples.length : null};
 }
-const ms = x => x == null ? '–' : Math.round(x);
+const median = a => { a = a.filter(x => x != null); return a.length ? pct(a, .5) : null; };
+function nice(v){
+  const p = 10 ** Math.floor(Math.log10(v));
+  for (const m of [1,1.5,2,2.5,3,4,5,6,8,10]) if (v <= m*p) return m*p;
+  return 10*p;
+}
+const cssv = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const REM = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 10;
+
+// Pings fill the resource timing buffer fast; keep it from filling up so speed tests can read theirs
+try { performance.setResourceTimingBufferSize(1000); } catch(e){}
+try { performance.addEventListener('resourcetimingbufferfull', () => performance.clearResourceTimings()); } catch(e){}
 
 /* ---------- Ping ----------
   Browsers can't send ICMP, so each "ping" is a tiny HTTPS request with a
@@ -182,13 +245,25 @@ const ms = x => x == null ? '–' : Math.round(x);
 async function ping(t){
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
-  const u = t.url + (t.url.includes('?') ? '&' : '?') + '_=' + Date.now() + Math.random().toString(36).slice(2,6);
+  const u = t.url + (t.url.includes('?') ? '&' : '?') + '_=' + rnd();
   const s = performance.now();
   try {
     await fetch(u, {mode:'no-cors', cache:'no-store', method:t.method, signal:ctrl.signal, credentials:'omit'});
     return performance.now() - s;
   } catch(e){ return null; }
   finally { clearTimeout(timer); }
+}
+
+/* ---------- Current numbers ---------- */
+function current(now = Date.now()){
+  const per = targets.map(t => stats(since(t.s, 30e3, now)));
+  const ok30 = since(okS, 30e3, now), ok60 = since(okS, 60e3, now), okR = since(okS, RANGE, now);
+  const lossOf = a => a.length ? 1 - a.reduce((x,o) => x + o.r, 0)/a.length : null;
+  const allR = []; targets.forEach(t => { for (const s of since(t.s, RANGE, now)) if (s.v != null) allR.push(s.v); });
+  return {
+    lat: median(per.map(r => r.avg)), jit: median(per.map(r => r.jit)),
+    loss30: lossOf(ok30), loss60: lossOf(ok60), lossR: lossOf(okR), p95R: pct(allR, .95)
+  };
 }
 
 /* ---------- Status ---------- */
@@ -198,24 +273,16 @@ const STATE = {
   POOR:    {word:'Connection poor', c:'var(--poor)'},
   OFFLINE: {word:'No internet',     c:'var(--bad)'}
 };
-let status = null, candidate = null, candidateCount = 0, statusSince = Date.now();
-let outageStart = null, outages = 0, downtime = 0;
+let status = null, candidate = null, candidateCount = 0, statusSince = Date.now(), outageStart = null;
 
-function evaluate(okNow){
+function evaluate(okNow, cur){
   if (okNow === 0) return {s:'OFFLINE', why:'None of the test servers are answering'};
-  const n = Math.min(15, okHist.length);
-  let loss = 0; for (let i = 0; i < n; i++) loss += 1 - okHist[okHist.length-1-i];
-  loss = n ? loss/n : 0;
-  const recent = targets.map(t => stats(t.hist.slice(-15)));
-  const lats = recent.map(r => r.avg).filter(x => x != null).sort((a,b) => a-b);
-  const lat = lats.length ? lats[Math.floor(lats.length/2)] : 0;
-  const jit = Math.max(0, ...recent.map(r => r.jit || 0));
-  const why = `${Math.round(lat)} ms latency, ${(loss*100).toFixed(loss < .1 ? 1 : 0)}% loss, ${Math.round(jit)} ms jitter (last 30 s)`;
+  const loss = cur.loss30 || 0, lat = cur.lat || 0, jit = cur.jit || 0;
+  const why = `${Math.round(lat)} ms latency · ${pctTxt(loss)} loss · ${Math.round(jit)} ms jitter  (last 30 s)`;
   if (loss > .10 || lat > 400 || jit > 150) return {s:'POOR', why};
   if (loss > .02 || lat > 150 || jit > 50)  return {s:'FAIR', why};
   return {s:'GOOD', why};
 }
-
 function applyStatus(ev){
   const now = Date.now();
   // Offline/back-online switch instantly; quality changes need 3 ticks in a row
@@ -225,7 +292,8 @@ function applyStatus(ev){
     if (instant || candidateCount >= 3){
       if (ev.s === 'OFFLINE'){ outageStart = now; logEvent('bad', 'Internet lost'); }
       else if (status === 'OFFLINE'){
-        const d = now - outageStart; outages++; downtime += d; outageStart = null;
+        const d = now - outageStart; session.outages++; session.downtime += d;
+        session.longest = Math.max(session.longest, d); outageStart = null;
         logEvent('good', `Internet back after ${fmtDur(d)}`);
       } else if (status !== null){
         logEvent(ev.s === 'GOOD' ? 'good' : ev.s === 'FAIR' ? 'fair' : 'poor', `${STATE[status].word} → ${STATE[ev.s].word.toLowerCase()}`);
@@ -240,185 +308,412 @@ function applyStatus(ev){
 }
 
 /* ---------- Event log ---------- */
-const events = [];
+let events = [];
+const KIND = {good:'var(--good)', fair:'var(--fair)', poor:'var(--poor)', bad:'var(--bad)', info:'var(--muted)'};
 function logEvent(kind, text){
-  events.unshift({t:new Date(), kind, text}); if (events.length > 100) events.pop();
-  const col = {good:'var(--good)', fair:'var(--fair)', poor:'var(--poor)', bad:'var(--bad)', info:'var(--muted)'}[kind];
-  const li = document.createElement('li');
-  li.innerHTML = `<time></time><i style="--d:${col}"></i><span></span>`;
-  li.querySelector('time').textContent = hms(events[0].t);
-  li.querySelector('span').textContent = text;
-  const log = $('log'); const empty = log.querySelector('.empty'); if (empty) empty.remove();
-  log.prepend(li); while (log.children.length > 100) log.lastChild.remove();
+  events.unshift({t: Date.now(), kind, text}); if (events.length > 100) events.pop();
+  renderLog();
+}
+function renderLog(){
+  const log = $('log'); if (!events.length) return;
+  log.innerHTML = '';
+  events.slice(0, 40).forEach(e => {
+    const li = document.createElement('li');
+    li.innerHTML = `<time></time><i></i><span></span>`;
+    li.querySelector('time').textContent = hms(e.t);
+    li.querySelector('i').style.setProperty('--d', KIND[e.kind] || KIND.info);
+    li.querySelector('span').textContent = e.text; li.title = e.text;
+    log.append(li);
+  });
+  const n = session.outages + (outageStart ? 1 : 0);
+  $('logHead').textContent = `${n} outage${n === 1 ? '' : 's'} this session`;
 }
 addEventListener('offline', () => logEvent('bad', 'Device reports network adapter offline'));
 addEventListener('online',  () => logEvent('info', 'Device reports network adapter online'));
 
-/* ---------- Cards ---------- */
-function buildCards(){
-  const wrap = $('targets');
+/* ---------- KPI tiles ---------- */
+const TILES = [
+  {id:'lat',  lbl:'Latency'},
+  {id:'jit',  lbl:'Jitter'},
+  {id:'loss', lbl:'Packet loss'},
+  {id:'down', lbl:'Download', click:true},
+  {id:'up',   lbl:'Upload', click:true},
+  {id:'load', lbl:'Latency under load'},
+  {id:'avail',lbl:'Availability'}
+];
+const tileEl = {};
+function buildTiles(){
+  TILES.forEach(d => {
+    const el = document.createElement('div'); el.className = 'tile' + (d.click ? ' click' : '');
+    el.innerHTML = `<div class="lbl"></div><div class="val"><b>–</b><small></small></div><div class="sub">&nbsp;</div>`;
+    el.querySelector('.lbl').textContent = d.lbl;
+    if (d.click) el.addEventListener('click', () => speedTest());
+    tileEl[d.id] = {el, v: el.querySelector('.val b'), u: el.querySelector('.val small'), s: el.querySelector('.sub')};
+    $('kpi').append(el);
+  });
+}
+// lower is better unless hi = true
+function grade(v, good, fair, hi){
+  if (v == null) return 'var(--line)';
+  if (hi) return v >= good ? 'var(--good)' : v >= fair ? 'var(--fair)' : 'var(--poor)';
+  return v <= good ? 'var(--good)' : v <= fair ? 'var(--fair)' : 'var(--poor)';
+}
+function setTile(id, val, unit, sub, color){
+  const t = tileEl[id]; t.v.textContent = val; t.u.textContent = unit; t.s.textContent = sub || ' ';
+  t.el.style.setProperty('--g', color);
+}
+function lastSpeed(){ for (let i = speeds.length-1; i >= 0; i--) if (speeds[i].t1) return speeds[i]; return null; }
+function renderTiles(cur){
+  const ls = lastSpeed(), inR = speeds.filter(s => s.t1 && s.t >= Date.now() - RANGE);
+  const avgOf = k => { const v = inR.map(s => s[k]).filter(x => x != null); return v.length ? v.reduce((a,b) => a+b, 0)/v.length : null; };
+  const rangeTxt = `${Math.round(RANGE/60e3)} min`;
+  setTile('lat', f0(cur.lat), 'ms', `p95 ${rangeTxt}: ${f0(cur.p95R)} ms`, grade(cur.lat, 80, 150));
+  setTile('jit', f0(cur.jit), 'ms', 'last 30 s', grade(cur.jit, 20, 50));
+  setTile('loss', pctTxt(cur.loss60), '', `last 1 min · ${rangeTxt}: ${pctTxt(cur.lossR)}`, grade(cur.loss60, .005, .02));
+  const nextTxt = speedRunning ? 'testing now…' : !SPEED_EVERY ? 'auto tests off · tap to run' : nextSpeedAt ? `next at ${hm(nextSpeedAt)}` : '';
+  setTile('down', speedRunning && phase === 'down' ? '…' : f1(ls?.down), 'Mbps', inR.length > 1 ? `avg ${f1(avgOf('down'))} · ${nextTxt}` : nextTxt, grade(ls?.down, 25, 10, true));
+  if (UPLOAD) setTile('up', speedRunning && phase === 'up' ? '…' : f1(ls?.up), 'Mbps', inR.length > 1 ? `avg ${f1(avgOf('up'))} Mbps` : ls ? 'at ' + hms(ls.t) : '', grade(ls?.up, 10, 3, true));
+  else setTile('up', 'off', '', 'upload test disabled', 'var(--line)');
+  setTile('load', ls?.loaded == null ? '–' : '+' + f0(ls.loaded), 'ms', 'rise during speed test', grade(ls?.loaded, 30, 100));
+  const av = session.ticks ? session.up/session.ticks : null;
+  const n = session.outages + (outageStart ? 1 : 0);
+  setTile('avail', av == null ? '–' : (av*100).toFixed(av === 1 ? 0 : 2), '%', `${n} outage${n === 1 ? '' : 's'} · ${fmtDur(session.downtime + (outageStart ? Date.now() - outageStart : 0))} down`, grade(av, .999, .99, true));
+}
+
+/* ---------- Targets panel ---------- */
+function buildTargets(){
+  const w = $('tgt');
+  ['Server', 'Last 2 min', 'Now', 'Avg', 'p95', 'Loss'].forEach(h => { const d = document.createElement('div'); d.className = 'hd'; d.textContent = h; w.append(d); });
   targets.forEach(t => {
     let host = t.url; try { host = new URL(t.url).hostname; } catch(e){}
-    const el = document.createElement('div'); el.className = 'card'; el.style.setProperty('--c', t.color);
-    el.innerHTML = `<h2>${''}<em></em><span></span></h2>
-      <div class="big num"><b>–</b><small>ms</small></div>
-      <div class="stats">
-        <div>Avg<b>–</b></div><div>Min<b>–</b></div><div>Max<b>–</b></div><div>Jitter<b>–</b></div><div>Loss<b>–</b></div>
-      </div>`;
-    el.querySelector('em').textContent = t.name; el.querySelector('em').style.fontStyle = 'normal';
-    el.querySelector('span').textContent = host;
-    t.el = el; t.bigEl = el.querySelector('.big b'); t.statEls = el.querySelectorAll('.stats b');
-    wrap.appendChild(el);
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.style.setProperty('--c', t.color);
+    nm.innerHTML = '<b></b><span></span>'; nm.querySelector('b').textContent = t.name; nm.querySelector('span').textContent = host;
+    t.spark = document.createElement('canvas');
+    t.nowEl = document.createElement('div'); t.nowEl.className = 'now';
+    t.stEls = [0,1,2].map(() => { const d = document.createElement('div'); d.className = 'st'; return d; });
+    w.append(nm, t.spark, t.nowEl, ...t.stEls);
   });
+  $('tgtHead').textContent = `every ${INTERVAL/1000}s · stats over ${Math.round(RANGE/60e3)} min`;
 }
-function renderCards(){
+function renderTargets(now){
   targets.forEach(t => {
-    const s = stats(t.hist);
-    t.el.classList.toggle('fail', t.last == null);
-    t.bigEl.textContent = t.last == null ? 'Lost' : Math.round(t.last);
-    t.el.querySelector('.big small').style.display = t.last == null ? 'none' : '';
-    const v = [ms(s.avg), ms(s.min), ms(s.max), ms(s.jit), (s.loss*100).toFixed(s.loss && s.loss < .1 ? 1 : 0) + '%'];
-    t.statEls.forEach((b,i) => b.textContent = v[i]);
+    const s = stats(since(t.s, RANGE, now));
+    t.nowEl.textContent = t.s.length ? (t.last == null ? 'Lost' : Math.round(t.last)) : '–';
+    t.nowEl.classList.toggle('lost', t.s.length > 0 && t.last == null);
+    t.stEls[0].textContent = f0(s.avg); t.stEls[1].textContent = f0(s.p95); t.stEls[2].textContent = pctTxt(s.loss);
+    drawSpark(t, now);
   });
 }
 
-/* ---------- Chart ---------- */
-const canvas = $('chart');
-function niceMax(v){ for (const s of [50,100,150,200,300,500,750,1000,1500,2000,3000,5000]) if (v <= s) return s; return Math.ceil(v/1000)*1000; }
-function drawChart(){
+/* ---------- Charts ---------- */
+function prep(canvas){
   const dpr = devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
-  if (!w || !h) return;
-  if (canvas.width !== Math.round(w*dpr) || canvas.height !== Math.round(h*dpr)){ canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr); }
+  if (!w || !h) return null;
+  const W = Math.round(w*dpr), H = Math.round(h*dpr);
+  if (canvas.width !== W || canvas.height !== H){ canvas.width = W; canvas.height = H; }
   const ctx = canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
-  const css = getComputedStyle(document.documentElement);
-  const C = k => css.getPropertyValue(k).trim();
-  const fs = Math.max(11, Math.min(w,h) * 0.055);
-  ctx.font = `500 ${fs}px ${C('--cond')}`;
-  const padL = fs*3, padR = 8, padT = 6, stripH = Math.max(6, fs*.6), padB = fs*1.6 + stripH + 6;
-  const pw = w - padL - padR, ph = h - padT - padB;
-
-  const all = []; targets.forEach(t => t.hist.forEach(v => v != null && all.push(v)));
-  all.sort((a,b) => a-b);
-  const ymax = niceMax(Math.max(50, (all.length ? all[Math.floor(all.length*.95)] : 50) * 1.25));
-  const y = v => padT + ph - Math.min(v, ymax)/ymax * ph;
-  const x = i => padL + (i / (WINDOW-1)) * pw;
-
-  // grid
-  ctx.strokeStyle = C('--line'); ctx.fillStyle = C('--muted'); ctx.lineWidth = 1;
+  return {ctx, w, h};
+}
+// Chart window: starts at 5 min and widens with the data up to the full range,
+// so a freshly loaded page doesn't show an hour of empty grid
+function spanOf(now){
+  let oldest = now; targets.forEach(t => { if (t.s.length) oldest = Math.min(oldest, t.s[0].t); });
+  return clamp(now - oldest, 5*60e3, RANGE);
+}
+// Shared layout for both charts: time window ending now
+function layout(w, h, now, ymax, fs, rem, span){
+  const padL = fs*3.4, padR = rem*.6, padT = rem*.6, strip = rem*1, padB = fs + strip + rem*1.4;
+  const pw = w - padL - padR, ph = h - padT - padB, t0 = now - span;
+  return {padL, padT, pw, ph, strip, t0, span,
+          X: t => padL + (t - t0)/span*pw, Y: v => padT + ph - Math.min(v, ymax)/ymax*ph};
+}
+function axes(ctx, A, ymax, fs, rem){
+  ctx.font = `500 ${fs}px ${cssv('--cond')}`;
+  ctx.strokeStyle = cssv('--line'); ctx.fillStyle = cssv('--muted'); ctx.lineWidth = 1;
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for (let k = 0; k <= 4; k++){
-    const v = ymax*k/4, yy = Math.round(y(v)) + .5;
-    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL+pw, yy); ctx.stroke();
-    ctx.fillText(Math.round(v) + ' ms', padL - 6, yy);
+    const v = ymax*k/4, yy = Math.round(A.Y(v)) + .5;
+    ctx.beginPath(); ctx.moveTo(A.padL, yy); ctx.lineTo(A.padL + A.pw, yy); ctx.stroke();
+    ctx.fillText(v >= 10 || v === 0 ? Math.round(v) : v.toFixed(1), A.padL - rem*.6, yy);
   }
-  // time labels
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  const span = WINDOW * INTERVAL;
-  for (let k = 0; k <= 4; k++){
-    const ago = span * (1 - k/4);
-    ctx.fillText(k === 4 ? 'now' : '-' + fmtDur(ago), padL + pw*k/4, padT + ph + stripH + 10);
+  ctx.textBaseline = 'top';
+  const lbl = A.span < 20*60e3 ? hms : hm;
+  for (let k = 0; k <= 6; k++){
+    const t = A.t0 + A.span*k/6;
+    ctx.textAlign = k === 0 ? 'left' : k === 6 ? 'right' : 'center';
+    ctx.fillText(k === 6 ? 'now' : lbl(t), A.padL + A.pw*k/6, A.padT + A.ph + A.strip + rem*.9);
   }
-  // availability strip
-  const off = WINDOW - okHist.length, bw = pw / WINDOW;
-  okHist.forEach((r,i) => {
-    ctx.fillStyle = r === 1 ? C('--good') : r > 0 ? C('--fair') : C('--bad');
-    ctx.fillRect(x(off+i) - bw/2, padT + ph + 4, Math.max(1, bw), stripH);
-  });
-  // lines
-  ctx.lineWidth = Math.max(1.5, fs*.12); ctx.lineJoin = 'round';
-  targets.forEach(t => {
-    const o = WINDOW - t.hist.length; ctx.strokeStyle = t.color; ctx.beginPath();
-    let pen = false;
-    t.hist.forEach((v,i) => {
-      if (v == null){ pen = false; return; }
-      const X = x(o+i), Y = y(v);
-      pen ? ctx.lineTo(X,Y) : ctx.moveTo(X,Y); pen = true;
-    });
-    ctx.stroke();
-    // lost samples as markers at the top
-    ctx.fillStyle = C('--bad');
-    t.hist.forEach((v,i) => { if (v == null) ctx.fillRect(x(o+i) - 1.5, padT, 3, fs*.5); });
-  });
-  $('chartRange').textContent = `Last ${fmtDur(span)} · every ${INTERVAL/1000}s · bar = availability`;
 }
-new ResizeObserver(drawChart).observe(canvas);
 
-/* ---------- Speed test ---------- */
-let lastSpeed = null, speedRunning = false;
+function drawLatency(now){
+  const g = prep($('latChart')); if (!g) return;
+  const {ctx, w, h} = g, rem = REM(), fs = rem*1.4, span = spanOf(now), t0 = now - span;
+  const all = []; targets.forEach(t => { for (const s of t.s) if (s.v != null && s.t >= t0) all.push(s.v); });
+  const ymax = nice(Math.max(50, (pct(all, .98) || 50) * 1.2));
+  const A = layout(w, h, now, ymax, fs, rem, span);
+  // speed-test periods first so the grid and lines sit on top
+  ctx.fillStyle = cssv('--shade');
+  speeds.forEach(s => {
+    const a = Math.max(s.t, t0), b = s.t1 || now; if (b < t0) return;
+    ctx.fillRect(A.X(a), A.padT, Math.max(rem*.4, A.X(b) - A.X(a)), A.ph);
+  });
+  axes(ctx, A, ymax, fs, rem);
+  // bucket into ~3px columns
+  const nb = Math.max(30, Math.floor(A.pw/3)), bs = span/nb, bw = A.pw/nb;
+  const okB = Array.from({length: nb}, () => [0,0]);
+  for (const o of okS){ const i = Math.floor((o.t - t0)/bs); if (i >= 0 && i < nb){ okB[i][0] += o.r; okB[i][1]++; } }
+  const cG = cssv('--good'), cF = cssv('--fair'), cB = cssv('--bad');
+  okB.forEach(([sum, n], i) => {
+    if (!n) return; const r = sum/n;
+    ctx.fillStyle = r >= .999 ? cG : r > 0 ? cF : cB;
+    ctx.fillRect(A.padL + i*bw, A.padT + A.ph + rem*.4, Math.ceil(bw), A.strip);
+  });
+  ctx.lineWidth = Math.max(1.5, rem*.22); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  targets.forEach(t => {
+    const b = new Array(nb);
+    for (const s of t.s){
+      const i = Math.floor((s.t - t0)/bs); if (i < 0 || i >= nb || s.v == null) continue;
+      const o = b[i] || (b[i] = [0,0]); o[0] += s.v; o[1]++;
+    }
+    ctx.strokeStyle = t.color; ctx.beginPath(); let pen = false;
+    for (let i = 0; i < nb; i++){
+      const o = b[i]; if (!o){ pen = false; continue; }
+      const x = A.padL + (i+.5)*bw, y = A.Y(o[0]/o[1]);
+      if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); ctx.lineTo(x + .5, y); }
+      pen = true;
+    }
+    ctx.stroke();
+  });
+  const bsTxt = bs < 1500 ? `${(bs/1000).toFixed(1)} s` : `${Math.round(bs/1000)} s`;
+  $('latHead').textContent = `ms · last ${Math.round(span/60e3)} min${span < RANGE ? ` (grows to ${Math.round(RANGE/60e3)})` : ''}, ${bsTxt} averages · shaded = speed test`;
+}
+
+function drawSpeed(now){
+  const g = prep($('spdChart')); if (!g) return;
+  const {ctx, w, h} = g, rem = REM(), fs = rem*1.4, span = spanOf(now), t0 = now - span;
+  const recs = speeds.filter(s => s.t1 && s.t >= t0 && (s.down != null || s.up != null));
+  const ymax = nice(Math.max(10, ...recs.map(s => Math.max(s.down || 0, s.up || 0))) * 1.15);
+  const A = layout(w, h, now, ymax, fs, rem, span);
+  axes(ctx, A, ymax, fs, rem);
+  const every = (SPEED_EVERY || 300)*1000;
+  const bw = clamp(A.pw/(span/every)*.3, rem*.5, rem*2.2);
+  const bar = (x, v, c) => { if (v == null) return; const y = A.Y(v); ctx.fillStyle = c; ctx.fillRect(x, y, bw, A.padT + A.ph - y); };
+  const cD = cssv('--down'), cU = cssv('--up');
+  recs.forEach(s => { const x = Math.min(A.X(s.t), A.padL + A.pw - bw); bar(x - bw, s.down, cD); bar(x, s.up, cU); });
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = cssv('--muted');
+  ctx.font = `500 ${rem*1.7}px ${cssv('--sans')}`;
+  if (!recs.length){
+    ctx.fillText(speedRunning ? 'Testing…' : !SPEED_EVERY ? 'Automatic tests off. Tap Download to run one.' : nextSpeedAt ? `First test at ${hms(nextSpeedAt)}` : 'Waiting…', A.padL + A.pw/2, A.padT + A.ph/2);
+  } else { // label the latest result
+    const s = recs[recs.length-1], x = Math.min(A.X(s.t), A.padL + A.pw - bw), y = A.Y(Math.max(s.down || 0, s.up || 0));
+    ctx.font = `600 ${fs}px ${cssv('--cond')}`; ctx.fillStyle = cssv('--text'); ctx.textBaseline = 'bottom';
+    ctx.textAlign = x > A.padL + A.pw - rem*8 ? 'right' : 'center';
+    ctx.fillText(`${f1(s.down)} / ${f1(s.up)} Mbps`, Math.min(x + bw, A.padL + A.pw), Math.max(y - rem*.4, A.padT + fs));
+  }
+}
+
+function drawSpark(t, now){
+  const g = prep(t.spark); if (!g) return;
+  const {ctx, w, h} = g, rem = REM(), win = 120e3, t0 = now - win;
+  const pts = since(t.s, win, now);
+  const max = nice(Math.max(50, ...pts.map(s => s.v || 0)) * 1.1);
+  const X = tt => (tt - t0)/win*w, Y = v => h - 2 - Math.min(v, max)/max*(h - 4);
+  ctx.strokeStyle = t.color; ctx.lineWidth = Math.max(1.2, rem*.18); ctx.lineJoin = 'round'; ctx.beginPath();
+  let pen = false;
+  pts.forEach(s => { if (s.v == null){ pen = false; return; } pen ? ctx.lineTo(X(s.t), Y(s.v)) : ctx.moveTo(X(s.t), Y(s.v)); pen = true; });
+  ctx.stroke();
+  ctx.fillStyle = cssv('--bad');
+  pts.forEach(s => { if (s.v == null) ctx.fillRect(X(s.t) - 1.5, 0, 3, h); });
+}
+
+/* ---------- Speed test ----------
+  Cloudflare's speed endpoints allow cross-origin reads and expose Resource
+  Timing, so download time is measured from first byte to last byte. Test size
+  adapts so each direction takes about 4 s. */
+let speedRunning = false, phase = null, nextSpeedAt = null;
+let nextDown = FIXED_MB ? FIXED_MB*1e6 : 5e6, nextUp = FIXED_MB ? Math.min(FIXED_MB, 25)*1e6 : 2e6;
+async function withTimeout(fn, ms){
+  const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), ms);
+  try { return await fn(ctrl.signal); } finally { clearTimeout(to); }
+}
+async function measureDown(bytes){
+  const url = `https://speed.cloudflare.com/__down?bytes=${Math.round(bytes)}&r=${rnd()}`;
+  return withTimeout(async signal => {
+    const s = performance.now();
+    const r = await fetch(url, {cache:'no-store', credentials:'omit', signal});
+    const b = await r.arrayBuffer(); const wall = performance.now() - s;
+    if (!b.byteLength) throw new Error('empty');
+    const e = performance.getEntriesByName(url).pop();
+    const body = e && e.responseStart > 0 ? e.responseEnd - e.responseStart : 0;
+    const dur = body > wall*.3 ? body : wall;
+    return b.byteLength*8/(Math.max(dur, 1)/1000)/1e6;
+  }, 30000);
+}
+async function measureUp(bytes, rtt){
+  const body = new Uint8Array(Math.round(bytes));
+  return withTimeout(async signal => {
+    const s = performance.now();
+    const r = await fetch(`https://speed.cloudflare.com/__up?r=${rnd()}`, {method:'POST', body, cache:'no-store', credentials:'omit', signal});
+    await r.arrayBuffer(); const wall = performance.now() - s;
+    const dur = Math.max(wall - (rtt || 0), wall*.5);
+    return bytes*8/(dur/1000)/1e6;
+  }, 30000);
+}
 async function speedTest(){
   if (speedRunning || status === 'OFFLINE') return;
-  speedRunning = true; renderInfo();
-  const url = `https://speed.cloudflare.com/__down?bytes=${SPEED_BYTES}&_=${Date.now()}`;
-  let mbps = null;
+  speedRunning = true; nextSpeedAt = null;
+  const t0 = Date.now(), idle = current(t0).lat;
+  const rec = {t: t0, t1: null, down: null, up: null, idle, loaded: null};
+  speeds.push(rec);
+  try { performance.clearResourceTimings(); } catch(e){}
+  phase = 'down'; render();
   try {
-    const s = performance.now();
-    const r = await fetch(url, {cache:'no-store'});
-    const b = await r.arrayBuffer();
-    mbps = b.byteLength * 8 / ((performance.now() - s)/1000) / 1e6;
-  } catch(e){
-    // Fallback if the CORS read is blocked: time the opaque download via Resource Timing
+    rec.down = await measureDown(nextDown); session.bytes += nextDown;
+    if (!FIXED_MB) nextDown = clamp(rec.down*1e6/8*4, 2e6, 50e6);
+  } catch(e){}
+  if (UPLOAD){
+    phase = 'up'; render();
     try {
-      performance.clearResourceTimings();
-      const u2 = url + 'b';
-      fetch(u2, {mode:'no-cors', cache:'no-store'}).catch(()=>{});
-      for (let i = 0; i < 240 && mbps == null; i++){
-        await sleep(250);
-        const en = performance.getEntriesByName(u2)[0];
-        if (en && en.responseEnd > 0 && en.duration > 0) mbps = SPEED_BYTES * 8 / (en.duration/1000) / 1e6;
-      }
-    } catch(e2){}
+      rec.up = await measureUp(nextUp, idle); session.bytes += nextUp;
+      if (!FIXED_MB) nextUp = clamp(rec.up*1e6/8*4, 1e6, 25e6);
+    } catch(e){}
   }
-  speedRunning = false;
-  if (mbps != null){
-    lastSpeed = {mbps, t:new Date()};
-    logEvent('info', `Download test: ${mbps.toFixed(1)} Mbps (${SPEED_BYTES/1e6} MB)`);
-  } else logEvent('poor', 'Download test failed');
-  renderInfo();
+  rec.t1 = Date.now(); phase = null; speedRunning = false;
+  // How much did latency rise while the link was saturated? (bufferbloat)
+  const during = [];
+  targets.forEach(t => { for (const s of t.s) if (s.t >= t0 && s.t <= rec.t1 && s.v != null) during.push(s.v); });
+  if (during.length && idle != null) rec.loaded = Math.max(0, pct(during, .5) - idle);
+  if (rec.down == null && rec.up == null){ speeds.splice(speeds.indexOf(rec), 1); logEvent('poor', 'Speed test failed'); }
+  else logEvent('info', `Speed test: ↓ ${f1(rec.down)} · ↑ ${f1(rec.up)} Mbps` + (rec.loaded != null ? ` · +${Math.round(rec.loaded)} ms under load` : ''));
+  if (SPEED_EVERY) nextSpeedAt = Date.now() + SPEED_EVERY*1000;
+  save(); render();
 }
+addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') speedTest(); });
 
-/* ---------- Info panel ---------- */
-let publicIP = '…';
-async function fetchIP(){
-  try { const r = await fetch('https://api.ipify.org?format=json', {cache:'no-store'}); publicIP = (await r.json()).ip; }
-  catch(e){ if (publicIP === '…') publicIP = 'Unavailable'; }
+/* ---------- Network info ---------- */
+const net = {ip: '…', isp: '…', loc: '…', edge: '…', http: '', setup: '…'};
+async function probeConnection(){
+  // First request to a host: DNS + TCP + TLS are visible in Resource Timing
+  const url = `https://speed.cloudflare.com/__down?bytes=0&r=${rnd()}`;
+  try {
+    await (await fetch(url, {cache:'no-store', credentials:'omit'})).arrayBuffer();
+    const e = performance.getEntriesByName(url).pop();
+    if (e && e.requestStart > 0){
+      const dns = e.domainLookupEnd - e.domainLookupStart;
+      const tls = e.secureConnectionStart > 0 ? e.connectEnd - e.secureConnectionStart : 0;
+      const tcp = (e.secureConnectionStart > 0 ? e.secureConnectionStart : e.connectEnd) - e.connectStart;
+      const ttfb = e.responseStart - e.requestStart;
+      net.setup = `DNS ${f0(dns)} · TCP ${f0(tcp)} · TLS ${f0(tls)} · reply ${f0(ttfb)} ms`;
+    } else net.setup = 'Not reported';
+  } catch(e){ net.setup = 'Failed'; }
+}
+async function fetchMeta(){
+  const before = net.ip;
+  try {
+    const m = await (await fetch('https://speed.cloudflare.com/meta', {cache:'no-store', credentials:'omit'})).json();
+    net.ip = m.clientIp || net.ip;
+    net.isp = m.asOrganization ? `${m.asOrganization}${m.asn ? ' (AS' + m.asn + ')' : ''}` : '–';
+    net.loc = [m.city, m.region, m.country].filter(Boolean).join(', ') || '–';
+    const c = m.colo; net.edge = c ? (typeof c === 'string' ? c : [c.iata, c.city].filter(Boolean).join(' · ')) : '–';
+    net.http = m.httpProtocol || '';
+  } catch(e){
+    try {
+      const txt = await (await fetch('https://1.1.1.1/cdn-cgi/trace', {cache:'no-store', credentials:'omit'})).text();
+      const o = Object.fromEntries(txt.trim().split('\n').map(l => l.split('=')));
+      net.ip = o.ip || net.ip; net.loc = o.loc || '–'; net.edge = o.colo || '–'; net.http = o.http || '';
+      if (net.isp === '…') net.isp = 'Unavailable';
+    } catch(e2){ if (net.ip === '…') net.ip = net.isp = net.loc = net.edge = 'Unavailable'; }
+  }
+  if (before !== '…' && before !== 'Unavailable' && net.ip !== before) logEvent('fair', `Public IP changed: ${before} → ${net.ip}`);
+}
+function deviceText(){
+  const ua = navigator.userAgent;
+  const os = ua.match(/Android [\d.]+/)?.[0] || ua.match(/Windows NT [\d.]+/)?.[0]?.replace('NT 10.0', '10/11') ||
+             ua.match(/Mac OS X [\d_]+/)?.[0]?.replace(/_/g, '.') || ua.match(/CrOS|Linux \w+/)?.[0] || 'Unknown OS';
+  const cr = ua.match(/Chrome\/(\d+)/);
+  const br = cr ? 'Chromium ' + cr[1] : /Version\/\d+.*Safari/.test(ua) ? 'Safari' : '';
+  return [os, br].filter(Boolean).join(' · ');
 }
 function renderInfo(){
   const now = Date.now(), c = navigator.connection;
-  const curDown = outageStart ? now - outageStart : 0;
+  const link = c ? [c.type && c.type !== 'unknown' ? c.type : '', c.effectiveType, c.downlink != null ? `~${c.downlink} Mbps` : '', c.rtt != null ? `~${c.rtt} ms` : ''].filter(Boolean).join(', ') : 'Not reported';
+  const longest = Math.max(session.longest, outageStart ? now - outageStart : 0);
   const rows = [
+    ['Internet provider', net.isp],
+    ['Public IP', net.ip],
+    ['Location', net.loc],
+    ['Cloudflare edge', net.edge + (net.http ? ' · ' + net.http : '')],
+    ['Connection setup', net.setup],
+    ['Browser estimate', link],
+    ['Device', deviceText()],
+    ['Screen', `${screen.width}×${screen.height} @${+devicePixelRatio.toFixed(2)}x · window ${innerWidth}×${innerHeight}`],
     ['Status for', status ? fmtDur(now - statusSince) : '–'],
-    ['Availability', ticksTotal ? (ticksUp/ticksTotal*100).toFixed(2) + '%' : '–'],
-    ['Outages', `${outages + (outageStart ? 1 : 0)} · ${fmtDur(downtime + curDown)} total down`],
-    ['Download', speedRunning ? 'Testing…' : lastSpeed ? `${lastSpeed.mbps.toFixed(1)} Mbps at ${hms(lastSpeed.t)}` : (SPEED_EVERY ? 'Pending' : 'Off')],
-    ['Public IP', publicIP],
-    ['Link (browser)', c ? `${c.type && c.type !== 'unknown' ? c.type + ', ' : ''}${c.effectiveType || '?'}, ~${c.downlink ?? '?'} Mbps, ~${c.rtt ?? '?'} ms` : 'Not reported'],
-    ['Screen', `${screen.width}×${screen.height} @${devicePixelRatio}x`],
-    ['Monitoring', `${fmtDur(now - startedAt)} since ${hms(new Date(startedAt))}`],
+    ['Longest outage', longest ? fmtDur(longest) : 'None'],
+    ['Monitoring', `${fmtDur(now - session.start)} since ${hm(session.start)}`],
+    ['Test data used', fmtBytes(session.bytes)],
   ];
-  $('info').innerHTML = '';
-  rows.forEach(([k,v]) => {
+  const dl = $('info'); dl.innerHTML = '';
+  rows.forEach(([k, v]) => {
     const dt = document.createElement('dt'), dd = document.createElement('dd');
-    dt.textContent = k; dd.textContent = v; dd.title = v; $('info').append(dt, dd);
+    dt.textContent = k; dd.textContent = v; dd.title = v; dl.append(dt, dd);
   });
 }
 
+/* ---------- Save / restore (survives a page reload, e.g. a playlist loop) ---------- */
+function save(){
+  try {
+    localStorage.setItem(KEY, JSON.stringify({
+      v: 2, at: Date.now(), urls: targets.map(t => t.url).join(','),
+      s: targets.map(t => t.s.map(o => [o.t, o.v == null ? -1 : Math.round(o.v)])),
+      ok: okS.map(o => [o.t, +o.r.toFixed(3)]),
+      speeds: speeds.filter(s => s.t1), events: events.slice(0, 60), session
+    }));
+  } catch(e){}
+}
+function restore(){
+  if (P.get('reset') === '1'){ try { localStorage.removeItem(KEY); } catch(e){} return; }
+  let d = null; try { d = JSON.parse(localStorage.getItem(KEY)); } catch(e){}
+  if (!d || d.v !== 2 || Date.now() - d.at > RANGE || d.urls !== targets.map(t => t.url).join(',')) return;
+  try {
+    targets.forEach((t, i) => { t.s = (d.s[i] || []).map(([tt, v]) => ({t: tt, v: v < 0 ? null : v})); });
+    okS = d.ok.map(([tt, r]) => ({t: tt, r}));
+    speeds.push(...d.speeds); events = d.events || []; session = {...session, ...d.session};
+    logEvent('info', `Page reloaded, history restored (gap ${fmtDur(Date.now() - d.at)})`);
+  } catch(e){ targets.forEach(t => t.s = []); okS = []; speeds.length = 0; events = []; }
+}
+addEventListener('pagehide', save);
+
 /* ---------- Main loop ---------- */
+function render(){
+  const now = Date.now(), cur = current(now);
+  renderTiles(cur); renderTargets(now); drawLatency(now); drawSpeed(now); renderInfo();
+}
 async function tick(){
+  const now = Date.now();
   const res = await Promise.all(targets.map(ping));
   let ok = 0;
-  res.forEach((v,i) => { const t = targets[i]; t.sent++; t.last = v; if (v == null) t.lost++; else ok++; push(t.hist, v); });
-  push(okHist, ok / targets.length);
-  ticksTotal++; if (ok) ticksUp++;
-  applyStatus(evaluate(ok));
-  renderCards(); drawChart();
+  res.forEach((v, i) => { const t = targets[i]; t.last = v; if (v != null) ok++; t.s.push({t: now, v}); trim(t.s, now); });
+  okS.push({t: now, r: ok/targets.length}); trim(okS, now);
+  session.ticks++; if (ok) session.up++;
+  trim(speeds, now);
+  applyStatus(evaluate(ok, current(now)));
+  render();
 }
 async function main(){
-  $('playerName').textContent = NAME || (navigator.userAgent.match(/\(([^;)]+;[^;)]+)/)?.[1] ?? 'This device');
-  buildCards(); renderInfo();
-  setInterval(() => { $('clock').textContent = new Date().toLocaleString(); renderInfo(); }, 1000);
-  fetchIP(); setInterval(fetchIP, 10*60*1000);
+  $('playerName').textContent = NAME || deviceText() || 'This device';
+  $('wifi').textContent = [SSID && 'Wi-Fi ' + SSID, AP && 'AP ' + AP].filter(Boolean).join(' · ');
+  restore();
+  buildTiles(); buildTargets(); renderLog(); render();
+  const clock = () => { $('clock').textContent = new Date().toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); };
+  clock(); setInterval(clock, 1000);
+  setInterval(save, 30e3);
+  new ResizeObserver(() => render()).observe(document.body);
+  await probeConnection(); fetchMeta(); setInterval(fetchMeta, 10*60e3);
   await Promise.all(targets.map(ping));            // warm-up: DNS + TLS, not counted
-  if (SPEED_EVERY){ setTimeout(speedTest, 15000); setInterval(speedTest, SPEED_EVERY*1000); }
+  if (SPEED_EVERY){
+    nextSpeedAt = Date.now() + 20e3;
+    setInterval(() => { if (nextSpeedAt && Date.now() >= nextSpeedAt) speedTest(); }, 1000);
+  }
   while (true){
     const s = Date.now();
     await tick();
