@@ -29,7 +29,7 @@ History is saved in the browser, so a page reload (for example a playlist loop) 
 | `speed` | `speed=600` | seconds between speed tests (default 300, `0` = off) |
 | `speedmb` | `speedmb=10` | fixed download size in MB (default: adaptive) |
 | `upload` | `upload=0` | skip the upload test |
-| `targets` | `targets=Google\|https://www.google.com/generate_204,CF|https://www.cloudflare.com/cdn-cgi/trace\|https://1.1.1.1/cdn-cgi/trace` | up to 6 https test servers |
+| `targets` | `targets=Google\|https://www.google.com/generate_204,CF\|https://www.cloudflare.com/cdn-cgi/trace` | up to 6 https test servers |
 | `theme` | `theme=light` | light colors |
 | `reset` | `reset=1` | forget saved history |
 
