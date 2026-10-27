@@ -27,7 +27,7 @@
 html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
 body{
   display:grid;gap:1.2rem;padding:1.4rem;
-  grid-template-columns:1fr 1fr 1fr;
+  grid-template-columns:1.15fr 1.15fr .7fr;   /* test servers / events ~30% narrower */
   grid-template-rows:auto auto minmax(0,1.25fr) minmax(0,1fr);
   grid-template-areas:"band band band" "kpi kpi kpi" "lat dl tgt" "spd info log";
 }
@@ -67,9 +67,9 @@ canvas{display:block;width:100%;flex:1;min-height:0}
 #dlSum div{font-size:1.3rem;color:var(--muted);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #dlSum b{display:block;font-family:var(--cond);font-size:2.6rem;font-weight:700;color:var(--text);line-height:1.1}
 #dlSum b.bad{color:var(--bad)} #dlSum b.warn{color:var(--fair)}
-#bigHead{font-size:1.35rem;color:var(--muted);margin-top:.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#bigHead b{color:var(--text);font-weight:600}
-#bigChart{flex:none;height:5.5rem;margin-top:.3rem}
+#dlWrap{cursor:pointer}
+#dlLine{font-size:1.55rem;color:var(--muted);margin-top:.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dlLine b{color:var(--v,var(--text));font-weight:700;font-family:var(--cond);font-size:2rem}
 .legend{display:flex;gap:1.6rem}
 .legend i{display:inline-block;width:1.2rem;height:.5rem;border-radius:.3rem;background:var(--c);margin-right:.5rem;vertical-align:middle}
 
@@ -97,7 +97,7 @@ canvas{display:block;width:100%;flex:1;min-height:0}
 #log li{display:grid;grid-template-columns:auto auto 1fr;gap:1rem;padding:.4rem 0;border-bottom:1px solid var(--line);align-items:center}
 #log time{color:var(--muted);font-variant-numeric:tabular-nums}
 #log i{width:1.1rem;height:1.1rem;border-radius:50%;background:var(--d)}
-#log span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#log span{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.25}
 #log .empty{display:block;color:var(--muted);border:0}
 
 /* Portrait / narrow screens: stack and scroll */
@@ -133,11 +133,10 @@ canvas{display:block;width:100%;flex:1;min-height:0}
 </section>
 
 <section id="dlWrap" class="panel">
-  <h3>Download consistency <span id="dlHead"></span></h3>
+  <h3>Download test <span id="dlHead"></span></h3>
   <div id="dlSum"></div>
   <canvas id="dlChart"></canvas>
-  <div id="bigHead"></div>
-  <canvas id="bigChart"></canvas>
+  <div id="dlLine"></div>
 </section>
 
 <section id="tgtWrap" class="panel">
@@ -173,10 +172,11 @@ canvas{display:block;width:100%;flex:1;min-height:0}
   &speed=300                seconds between speed tests (0 = off)
   &speedmb=10               fixed download test size in MB (default: adapts to ~4 s per test)
   &upload=0                 skip the upload test
-  &dl=60&dlmb=10            download consistency: a 10 MB download every 60 s (dl=0 = off)
-  &big=30&bigmb=200         big sustained download every 30 min (big=0 = off)
-  &dlurl=https://...        file for both downloads (needs CORS; repeated until the size is
-                            reached). Default: generated data from the LibreSpeed server
+  &dlmin=20                 download test: download continuously for 20 min after the page
+                            opens, then show a summary (0 = off; tap the panel or D to rerun)
+  &dlrate=50                pace of that download in Mbps (0 = full speed)
+  &dlurl=https://...        file to download (needs CORS; fetched again and again).
+                            Default: generated data from the LibreSpeed server
   &targets=Google|https://www.google.com/generate_204,Router|https://...
                             up to 6; must be https (the page is served over https)
   &theme=light
@@ -194,11 +194,9 @@ const RANGE = clamp(num('range', 60), 5, 240) * 60e3;
 const SPEED_EVERY = clamp(num('speed', 300), 0, 86400);
 const FIXED_MB = P.has('speedmb') ? clamp(num('speedmb', 10), .5, 200) : null;
 const UPLOAD = P.get('upload') !== '0';
-const DL_EVERY = clamp(num('dl', 60), 0, 86400);          // s between fixed downloads, 0 = off
-const DL_MB = clamp(num('dlmb', 10), .1, 500);
-const BIG_EVERY = clamp(num('big', 30), 0, 1440);         // min between big downloads, 0 = off
-const BIG_MB = clamp(num('bigmb', 200), 1, 2000);
-const DL_SRC = P.get('dlurl') || '';                      // file to download; repeated until the size is reached
+const DL_MIN = clamp(num('dlmin', 20), 0, 240);           // minutes of continuous download at page open, 0 = off
+const DL_RATE = clamp(num('dlrate', 50), 0, 10000);       // Mbps pace, 0 = full speed
+const DL_SRC = P.get('dlurl') || '';                      // file to download; fetched again and again
 
 const COLORS = ['#5cc8ff','#ff9ec7','#ffd27a','#7ee0d0','#c49bff','#9fb4ff'];
 const DEFAULT_TARGETS = [
@@ -220,7 +218,6 @@ const targets = parseTargets().slice(0,6).map((t,i) => ({
 }));
 let okS = [];               // per tick: {t, r} r = fraction of targets that answered
 const speeds = [];          // {t, t1, down, up, idle, loaded}
-const dls = [], bigs = [];  // download runs: {t, t1, ok, ms, mbps, min, stalls, stallMs, pct, why, secs}
 let busy = null;            // 'speed' | 'dl' | 'big': one link-loading test at a time
 let lastBusy = null;        // the test whose settle time we're in, for the status text
 let session = {start: Date.now(), ticks: 0, up: 0, outages: 0, downtime: 0, longest: 0, bytes: 0};
@@ -302,9 +299,10 @@ const SETTLE = 3000;   // ms after a speed test before samples count again
 // speed tests and the download tests all load the link on purpose
 function inTest(t){
   const hit = s => t >= s.t - TIMEOUT && t <= (s.t1 || Infinity) + SETTLE;
-  return speeds.some(hit) || dls.some(hit) || bigs.some(hit);
+  // a paced download is the realistic load we want latency measured under; only a full-speed one is excluded
+  return speeds.some(hit) || (!DL_RATE && soak.t0 != null && hit({t: soak.t0, t1: soak.t1}));
 }
-const quiet = a => speeds.length || dls.length || bigs.length ? a.filter(s => !inTest(s.t)) : a;
+const quiet = a => speeds.length || soak.t0 != null ? a.filter(s => !inTest(s.t)) : a;
 const best = a => { a = a.filter(x => x != null); return a.length ? Math.min(...a) : null; };
 function current(now = Date.now()){
   const over = ms => targets.map(t => stats(quiet(since(t.s, ms, now))));
@@ -327,7 +325,7 @@ let status = null, candidate = null, candidateCount = 0, statusSince = Date.now(
 
 function evaluate(okNow, cur){
   if (okNow === 0) return {s:'OFFLINE', why:'None of the test servers are answering'};
-  if (busy || inTest(Date.now())){
+  if ((busy && !(busy === 'dl' && DL_RATE)) || inTest(Date.now())){
     const k = busy || lastBusy;
     return {s: status || 'GOOD', why: k === 'dl' ? 'Download test running' : k === 'big' ? 'Big download running' : 'Speed test running, link is busy on purpose (see Latency under load)'};
   }
@@ -426,7 +424,7 @@ function renderTiles(cur){
   setTile('lat', f0(cur.lat), 'ms', `fastest server · p95 ${rangeTxt}: ${f0(cur.p95R)}`, grade(cur.lat, 80, 150));
   setTile('jit', f0(cur.jit), 'ms', 'steadiest server · 30 s', grade(cur.jit, 20, 50));
   setTile('loss', pctTxt(cur.loss60), '', `last 1 min · ${rangeTxt}: ${pctTxt(cur.lossR)}`, grade(cur.loss60, .005, .02));
-  const nextTxt = speedRunning ? 'testing now…' : !SPEED_EVERY ? 'auto tests off · tap to run' : nextSpeedAt ? `next at ${hm(nextSpeedAt)}` : '';
+  const nextTxt = speedRunning ? 'testing now…' : busy === 'dl' ? 'after the download test' : !SPEED_EVERY ? 'auto tests off · tap to run' : nextSpeedAt ? `next at ${hm(nextSpeedAt)}` : '';
   setTile('down', speedRunning && phase === 'down' ? '…' : f1(ls?.down), 'Mbps', inR.length > 1 ? `avg ${f1(avgOf('down'))} · ${nextTxt}` : nextTxt, grade(ls?.down, 25, 10, true));
   if (UPLOAD) setTile('up', speedRunning && phase === 'up' ? '…' : f1(ls?.up), 'Mbps', inR.length > 1 ? `avg ${f1(avgOf('up'))} Mbps` : ls ? 'at ' + hms(ls.t) : '', grade(ls?.up, 10, 3, true));
   else setTile('up', 'off', '', 'upload test disabled', 'var(--line)');
@@ -559,7 +557,7 @@ function drawSpeed(now){
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = cssv('--muted');
   ctx.font = `500 ${rem*1.7}px ${cssv('--sans')}`;
   if (!recs.length){
-    ctx.fillText(speedRunning ? 'Testing…' : !SPEED_EVERY ? 'Automatic tests off. Tap Download to run one.' : nextSpeedAt ? `First test at ${hms(nextSpeedAt)}` : 'Waiting…', A.padL + A.pw/2, A.padT + A.ph/2);
+    ctx.fillText(speedRunning ? 'Testing…' : busy === 'dl' ? 'First test runs after the download test' : !SPEED_EVERY ? 'Automatic tests off. Tap Download to run one.' : nextSpeedAt ? `First test at ${hms(nextSpeedAt)}` : 'Waiting…', A.padL + A.pw/2, A.padT + A.ph/2);
   } else { // label the latest result
     const s = recs[recs.length-1], x = Math.min(A.X(s.t), A.padL + A.pw - bw), y = A.Y(Math.max(s.down || 0, s.up || 0));
     ctx.font = `600 ${fs}px ${cssv('--cond')}`; ctx.fillStyle = cssv('--text'); ctx.textBaseline = 'bottom';
@@ -681,138 +679,146 @@ async function speedTest(){
 }
 addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') speedTest(); });
 
-/* ---------- Download consistency ----------
-  Like a player syncing content: download a file start to finish on a schedule
-  and record whether it completed, how long it took, its slowest second and any
-  stalls (1 s or more with no data). A big download every so often shows whether
-  Wi-Fi holds up over a long transfer; it keeps a per-second speed trace. */
-let nextDlAt = null, nextBigAt = null;
+/* ---------- Download test ----------
+  When the page opens, download continuously for DL_MIN minutes, then stop and
+  show a summary. Paced at DL_RATE Mbps so it is a steady load like a player
+  pulling content (0 = full speed). Records the speed of every second, stalls
+  (a read that waited 1 s or more for data) and drops (the connection failed;
+  it reconnects and carries on). */
+const soak = {state: 'idle', t0: null, t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, src: null, why: ''};
+// Paced like a player: fetch ~2 s worth of data at full speed, then wait out the rest of the slot.
+// (Throttling by not reading the stream made TCP collapse well below the target on long runs.)
+const CK_MIB = DL_RATE ? Math.max(1, Math.round(DL_RATE*2/8.389)) : 100;   // LibreSpeed chunk: ~2 s worth, MiB per request
 function dlSource(){
-  if (DL_SRC) return {name: (() => { try { return new URL(DL_SRC).hostname; } catch(e){ return DL_SRC; } })(), url: mb => DL_SRC};
+  if (DL_SRC) return {name: (() => { try { return new URL(DL_SRC).hostname; } catch(e){ return DL_SRC; } })(), url: () => DL_SRC};
   if (!ulServer) return null;
-  const base = ulServer.url.replace('empty.php', 'garbage.php');
-  return {name: `LibreSpeed ${ulServer.name}`, url: mb => `${base}?ckSize=${Math.max(1, Math.ceil(mb))}`};
+  return {name: `LibreSpeed ${ulServer.name}`, url: () => ulServer.url.replace('empty.php', 'garbage.php') + '?ckSize=' + CK_MIB};
 }
-async function measureFile(src, targetMB, timeoutMs){
-  const target = targetMB*1e6, ctrl = new AbortController(), t0 = performance.now();
-  let bytes = 0, tFirst = null, last = null, stalls = 0, stallMs = 0, timedOut = false;
-  const secs = []; let secBytes = 0, secStart = null;
-  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
-  let ok = false, why = '';
-  try {
-    while (bytes < target){
-      const u = src.url(targetMB);
+async function runSoak(){
+  if (busy || !DL_MIN) return;
+  busy = lastBusy = 'dl';
+  Object.assign(soak, {state: 'running', t0: Date.now(), t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, why: ''});
+  if (!DL_SRC && !ulServer) await pickUploadServer();
+  const src = dlSource(); soak.src = src?.name || null;
+  logEvent('info', `Download test started: ${DL_MIN} min ${DL_RATE ? `at ${DL_RATE} Mbps` : 'at full speed'}`);
+  const start = performance.now(), endAt = start + DL_MIN*60e3, ctrl = new AbortController();
+  const stopT = setTimeout(() => ctrl.abort(), DL_MIN*60e3 + 500);
+  let secStart = start, secBytes = 0, secIdle = 0;
+  const flush = now => { while (now - secStart >= 1000 && soak.secs.length < DL_MIN*60){ soak.secs.push(secBytes*8/1e6); soak.idle.push(secIdle); secBytes = 0; secIdle = 0; secStart += 1000; } };
+  // waiting on purpose (pacing) is recorded so those seconds don't count as "no data"
+  const pace = async ms => { const until = Math.min(performance.now() + ms, endAt); while (performance.now() < until){ const a = performance.now(); await sleep(Math.min(250, until - a)); const b = performance.now(); flush(b); secIdle += b - a; } };
+  // A single failed request is retried at once: free servers sometimes answer an error, which a
+  // browser can't tell apart from a lost connection. Only a failed retry counts as a drop.
+  let fails = 0;
+  while (performance.now() < endAt){
+    if (!src){ soak.why = 'no download server reachable'; break; }
+    try {
+      const u = src.url();
       const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'r=' + rnd(), {cache:'no-store', credentials:'omit', signal: ctrl.signal});
       if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
       const rd = r.body.getReader();
       for (;;){
-        const {done, value} = await rd.read(); if (done) break;
-        const now = performance.now();
-        if (tFirst == null){ tFirst = secStart = last = now; }
-        if (now - last >= 1000){ stalls++; stallMs += now - last; }
-        last = now; bytes += value.length; secBytes += value.length;
-        while (now - secStart >= 1000){ secs.push(secBytes*8/1e6); secBytes = 0; secStart += 1000; }
-        if (bytes >= target){ rd.cancel().catch(() => {}); break; }
+        const w0 = performance.now();
+        const {done, value} = await rd.read();
+        const now = performance.now(), wait = now - w0;
+        if (wait >= 1000){ soak.stalls++; soak.stallMs += wait; }
+        flush(now);
+        if (done) break;
+        if (fails){ if (fails > 1) logEvent('good', 'Download reconnected'); fails = 0; }
+        soak.bytes += value.length; secBytes += value.length; session.bytes += value.length;
+        if (now >= endAt){ rd.cancel().catch(() => {}); break; }
       }
+      if (DL_RATE){
+        const ahead = soak.bytes*8/(DL_RATE*1e3) - (performance.now() - start);   // ms; negative = behind pace
+        if (ahead > 0) await pace(ahead); else soak.behind = Math.max(soak.behind, -ahead);
+      }
+    } catch(e){
+      if (ctrl.signal.aborted || performance.now() >= endAt - 100) break;
+      fails++;
+      if (fails === 1){ soak.retries++; continue; }            // retry once straight away
+      if (fails === 2){ soak.drops++; logEvent('bad', `Download dropped (${String(e.message || '').startsWith('HTTP') ? e.message : 'connection lost'}), reconnecting`); }
+      await sleep(1000);
     }
-    ok = true;
-  } catch(e){
-    why = timedOut ? 'timed out' : bytes ? 'connection dropped' : String(e.message || e).startsWith('HTTP') ? String(e.message) : 'could not connect';
-    if (timedOut && last != null && performance.now() - last >= 1000){ stalls++; stallMs += performance.now() - last; }
-  } finally { clearTimeout(timer); }
-  const end = performance.now(), ms = end - (tFirst ?? t0);
-  return {ok, why, bytes, ms: end - t0, pct: Math.min(1, bytes/target),
-          mbps: bytes && ms > 0 ? bytes*8/(ms/1000)/1e6 : null,
-          min: secs.length >= 2 ? Math.min(...secs) : null, stalls, stallMs, secs};
-}
-async function downloadRun(kind){
-  if (busy) return;
-  busy = lastBusy = kind; const big = kind === 'big';
-  if (big) nextBigAt = null; else nextDlAt = null;
-  if (!DL_SRC && !ulServer) await pickUploadServer();
-  const src = dlSource(), mb = big ? BIG_MB : DL_MB;
-  const rec = {t: Date.now(), t1: null, ok: false, mb, src: src?.name || '–'};
-  (big ? bigs : dls).push(rec); render();
-  if (!src) Object.assign(rec, {why: 'no download server reachable', pct: 0, stalls: 0, stallMs: 0, secs: []});
-  else Object.assign(rec, await measureFile(src, mb, big ? 5*60e3 : Math.max(20e3, Math.min(DL_EVERY*900, 120e3))));
-  rec.t1 = Date.now(); session.bytes += rec.bytes || 0; busy = null;
-  if (big){
-    if (bigs.length > 20) bigs.shift();
-    logEvent(rec.ok ? (rec.stalls ? 'fair' : 'info') : 'bad', rec.ok
-      ? `Big download ${mb} MB: ${fmtSec(rec.ms)} · avg ${f1(rec.mbps)} · min ${f1(rec.min)} Mbps · ${rec.stalls} stall${rec.stalls === 1 ? '' : 's'}`
-      : `Big download ${mb} MB failed: ${rec.why} at ${Math.round(rec.pct*100)}%`);
-    if (BIG_EVERY) nextBigAt = Date.now() + BIG_EVERY*60e3;
-  } else {
-    if (!rec.ok) logEvent('bad', `Download ${mb} MB failed: ${rec.why} at ${Math.round(rec.pct*100)}%`);
-    else if (rec.stalls) logEvent('fair', `Download ${mb} MB stalled ${rec.stalls}× (${(rec.stallMs/1000).toFixed(1)} s) but completed`);
-    if (DL_EVERY) nextDlAt = Date.now() + DL_EVERY*1000;
   }
+  clearTimeout(stopT); flush(Math.min(performance.now(), endAt));
+  soak.t1 = Date.now(); soak.state = soak.why ? 'failed' : 'done'; busy = null;
+  const s = soakSummary();
+  logEvent(s.kind, soak.why ? `Download test failed: ${soak.why}` : `Download test: ${s.verdict} · ${f1(s.avg)} Mbps · ${soak.drops} drops`);
   render();
 }
-function renderDl(now){
-  const span = spanOf(now), runs = dls.filter(d => d.t1 && d.t >= now - span), done = runs.filter(d => d.ok);
-  const mb = runs.map(d => d.mbps).filter(x => x != null && x > 0);
-  const mean = mb.length ? mb.reduce((a, b) => a + b, 0)/mb.length : null;
-  const cv = mb.length > 1 ? Math.sqrt(mb.reduce((a, b) => a + (b - mean)**2, 0)/mb.length)/mean : null;
-  const st = runs.reduce((a, d) => a + (d.stalls || 0), 0), stMs = runs.reduce((a, d) => a + (d.stallMs || 0), 0);
-  const fails = runs.length - done.length;
+function soakSummary(){
+  const secs = soak.secs, n = secs.length;
+  const dur = soak.t0 ? ((soak.t1 || Date.now()) - soak.t0) : 0;
+  const avg = dur > 0 ? soak.bytes*8/(dur/1000)/1e6 : null;
+  let worst5 = null;
+  for (let i = 0; i + 5 <= n; i++){ const a = (secs[i]+secs[i+1]+secs[i+2]+secs[i+3]+secs[i+4])/5; if (worst5 == null || a < worst5) worst5 = a; }
+  const zero = secs.filter((v, i) => v === 0 && (soak.idle[i] || 0) < 500).length;   // no data and not pacing
+  const lag = DL_RATE ? soak.behind/1000 : null;                                      // worst lag behind pace, s
+  let verdict = 'Stable', kind = 'good';
+  if (soak.why || soak.drops > 2 || zero > 10){ verdict = 'Unstable'; kind = 'bad'; }
+  else if (soak.drops || soak.stalls || zero || (lag != null && lag > 5)){ verdict = 'Mostly stable'; kind = 'fair'; }
+  return {avg, worst5, zero, lag, verdict, kind, dur};
+}
+const fmtClock = ms => { const s = Math.max(0, Math.round(ms/1000)); return `${Math.floor(s/60)}:${pad(s % 60)}`; };
+function renderDl(){
+  const s = soakSummary(), run = soak.state === 'running', fin = soak.state === 'done' || soak.state === 'failed';
+  const left = run ? soak.t0 + DL_MIN*60e3 - Date.now() : 0;
+  const rate = DL_RATE ? `${DL_RATE} Mbps` : 'full speed';
+  $('dlHead').textContent = !DL_MIN ? 'off' : `${DL_MIN} min at ${rate} · ${soak.src || 'finding server…'}` +
+    (run ? ` · ${fmtClock(left)} left` : fin ? ` · ran ${hm(soak.t0)}–${hm(soak.t1)} · tap to run again` : '');
   const cells = [
-    ['Completed', runs.length ? `${done.length}/${runs.length}` : '–', fails ? 'bad' : ''],
-    ['Median time', done.length ? fmtSec(median(done.map(d => d.ms))) : '–', ''],
-    ['Speed', mean != null ? `${f1(median(mb))}${cv != null ? ' ±' + Math.round(cv*100) + '%' : ''}` : '–', cv > .5 ? 'warn' : ''],
-    ['Stalls', runs.length ? (st ? `${st} · ${(stMs/1000).toFixed(1)}s` : '0') : '–', st ? 'warn' : '']
+    ['Downloaded', soak.t0 ? fmtBytes(soak.bytes) : '–', ''],
+    ['Average', s.avg != null && soak.bytes ? f1(s.avg) : '–', DL_RATE && fin && s.avg < DL_RATE*.9 ? 'warn' : ''],
+    ['Stalls', soak.t0 ? (soak.stalls ? `${soak.stalls} · ${(soak.stallMs/1000).toFixed(1)}s` : '0') : '–', soak.stalls ? 'warn' : ''],
+    ['Drops', soak.t0 ? String(soak.drops) : '–', soak.drops ? 'bad' : '']
   ];
   const sum = $('dlSum'); sum.innerHTML = '';
-  cells.forEach(([k, v, cls]) => { const d = document.createElement('div'), b = document.createElement('b'); b.textContent = v; if (cls) b.className = cls; d.append(b, k + (k === 'Speed' ? ' Mbps' : '')); sum.append(d); });
-  const src = dlSource();
-  $('dlHead').textContent = !DL_EVERY ? 'off' : `${DL_MB} MB every ${DL_EVERY >= 60 ? DL_EVERY/60 + ' min' : DL_EVERY + ' s'} · ${src ? src.name : 'finding server…'}${busy === 'dl' ? ' · running…' : nextDlAt ? ' · next ' + hms(nextDlAt) : ''}`;
-  const b = bigs.filter(x => x.t1).pop();
-  const bh = $('bigHead'); bh.innerHTML = '';
-  const strong = document.createElement('b'); strong.textContent = `Big download ${BIG_MB} MB`;
-  const nextTxt = !BIG_EVERY ? 'off' : busy === 'big' ? 'running now…' : nextBigAt ? `next ${hm(nextBigAt)}` : '';
-  bh.append(strong, ' · ' + (b ? (b.ok
-      ? `${hm(b.t)} · ${fmtSec(b.ms)} · avg ${f1(b.mbps)} · min ${f1(b.min)} Mbps · ${b.stalls} stall${b.stalls === 1 ? '' : 's'}`
-      : `${hm(b.t)} · failed: ${b.why} at ${Math.round(b.pct*100)}%`) + ' · ' + nextTxt : nextTxt || 'waiting'));
-  drawDl(now, span); drawBig(b);
+  cells.forEach(([k, v, cls]) => { const d = document.createElement('div'), b = document.createElement('b'); b.textContent = v; if (cls) b.className = cls; d.append(b, k + (k === 'Average' ? ' Mbps' : '')); sum.append(d); });
+  const line = $('dlLine'); line.innerHTML = ''; line.style.removeProperty('--v');
+  if (run){
+    const last3 = soak.secs.slice(-3), now = last3.length ? last3.reduce((a, b) => a + b, 0)/last3.length : null;
+    line.textContent = `Downloading… ${fmtClock(Date.now() - soak.t0)} of ${DL_MIN}:00 · now ${f1(now)} Mbps` + (s.zero ? ` · ${s.zero} s with no data` : '');
+  } else if (fin){
+    const b = document.createElement('b'); b.textContent = soak.why ? 'Failed' : s.verdict;
+    line.style.setProperty('--v', `var(--${soak.why ? 'bad' : s.kind})`);
+    line.append(b, soak.why ? ` · ${soak.why}` :
+      ` · slowest 5 s: ${f1(s.worst5)} Mbps · ${s.zero} s no data` + (s.lag != null ? (s.lag < 1 ? ' · kept pace' : ` · fell ${f1(s.lag)} s behind pace`) : '') +
+      (soak.retries ? ` · ${soak.retries} server retr${soak.retries === 1 ? 'y' : 'ies'}` : ''));
+  } else line.textContent = DL_MIN ? 'Starts a few seconds after the page opens' : 'Download test off (dlmin=0)';
+  drawDl();
 }
-const fmtSec = ms => ms == null ? '–' : ms < 60e3 ? (ms/1000).toFixed(ms < 10e3 ? 1 : 0) + ' s' : fmtDur(ms);
-function drawDl(now, span){
+function drawDl(){
   const g = prep($('dlChart')); if (!g) return;
-  const {ctx, w, h} = g, rem = REM(), fs = rem*1.4, t0 = now - span;
-  const runs = dls.filter(d => d.t1 && d.t >= t0);
-  const ymax = niceTop(Math.max(10, ...runs.map(d => d.mbps || 0)) * 1.15);
-  const A = layout(w, h, now, ymax, fs, rem, span);
-  axes(ctx, A, ymax, fs, rem);
-  const bw = clamp(A.pw/(span/((DL_EVERY || 60)*1000))*.6, 1.5, rem*1.2);
+  const {ctx, w, h} = g, rem = REM(), fs = rem*1.4, secs = soak.secs, total = DL_MIN*60;
+  const ymax = niceTop(Math.max(10, DL_RATE*1.2, ...secs) * 1.1);
+  const padL = fs*3.4, padR = rem*.6, padT = rem*.6, padB = fs + rem*1.2, pw = w - padL - padR, ph = h - padT - padB;
+  const Y = v => padT + ph - Math.min(v, ymax)/ymax*ph;
+  ctx.font = `500 ${fs}px ${cssv('--cond')}`; ctx.strokeStyle = cssv('--line'); ctx.fillStyle = cssv('--muted'); ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let k = 0; k <= 4; k++){ const v = ymax*k/4, yy = Math.round(Y(v)) + .5; ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + pw, yy); ctx.stroke(); ctx.fillText(Math.round(v), padL - rem*.6, yy); }
+  ctx.textBaseline = 'top';
+  for (let k = 0; k <= 4; k++){ ctx.textAlign = k === 0 ? 'left' : k === 4 ? 'right' : 'center'; ctx.fillText(k === 0 ? '0' : `${Math.round(DL_MIN*k/4*10)/10} min`, padL + pw*k/4, padT + ph + rem*.6); }
+  // one column per pixel-ish bucket of seconds; red where a whole second had no data
+  // at least 3 s per column: paced downloads arrive in ~1 s bursts, so single seconds are jumpy
+  const nb = Math.max(1, Math.min(Math.floor(total/3), Math.floor(pw/2))), per = total/nb, bw = pw/nb;
   const cD = cssv('--down'), cF = cssv('--fair'), cB = cssv('--bad');
-  runs.forEach(d => {
-    const x = Math.min(A.X(d.t), A.padL + A.pw - bw);
-    if (!d.ok){ ctx.fillStyle = cB; ctx.fillRect(x, A.padT, bw, A.ph); return; }
-    const y = A.Y(d.mbps || 0); ctx.fillStyle = d.stalls ? cF : cD;
-    ctx.fillRect(x, y, bw, A.padT + A.ph - y);
-  });
-  // completion strip under the chart: green done, yellow done with stalls, red failed
-  runs.forEach(d => { ctx.fillStyle = !d.ok ? cB : d.stalls ? cF : cssv('--good'); ctx.fillRect(Math.min(A.X(d.t), A.padL + A.pw - bw), A.padT + A.ph + rem*.4, bw, A.strip); });
-  if (!runs.length){
+  for (let i = 0; i < nb; i++){
+    const a = Math.floor(i*per), b = Math.min(secs.length, Math.floor((i + 1)*per));
+    if (a >= secs.length) break;
+    let sum = 0, zero = false; for (let j = a; j < Math.max(b, a + 1); j++){ sum += secs[j]; if (secs[j] === 0 && (soak.idle[j] || 0) < 500) zero = true; }
+    const v = sum/Math.max(1, Math.max(b, a + 1) - a), x = padL + i*bw;
+    if (zero){ ctx.fillStyle = cB; ctx.fillRect(x, padT, Math.max(1, bw), ph); continue; }
+    const y = Y(v); ctx.fillStyle = DL_RATE && v < DL_RATE*.5 ? cF : cD; ctx.fillRect(x, y, Math.max(1, bw - (bw > 3 ? .5 : 0)), padT + ph - y);
+  }
+  if (DL_RATE){ // target pace
+    ctx.setLineDash([rem*.6, rem*.5]); ctx.strokeStyle = cssv('--muted'); ctx.beginPath(); const yy = Math.round(Y(DL_RATE)) + .5; ctx.moveTo(padL, yy); ctx.lineTo(padL + pw, yy); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (!secs.length){
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = cssv('--muted'); ctx.font = `500 ${rem*1.6}px ${cssv('--sans')}`;
-    ctx.fillText(!DL_EVERY ? 'Download test off' : busy === 'dl' ? 'Downloading…' : nextDlAt ? `First download at ${hms(nextDlAt)}` : 'Waiting…', A.padL + A.pw/2, A.padT + A.ph/2);
+    ctx.fillText(!DL_MIN ? 'Download test off' : soak.state === 'running' ? 'Connecting…' : 'Waiting to start…', padL + pw/2, padT + ph/2);
   }
 }
-function drawBig(b){
-  const g = prep($('bigChart')); if (!g) return;
-  const {ctx, w, h} = g, rem = REM();
-  ctx.fillStyle = cssv('--panel2'); ctx.fillRect(0, 0, w, h);
-  if (!b || !b.secs || !b.secs.length) return;
-  const max = nice(Math.max(10, ...b.secs) * 1.1), n = b.secs.length, bw = w/n;
-  const avg = b.mbps || 0, cD = cssv('--down'), cF = cssv('--fair'), cB = cssv('--bad');
-  b.secs.forEach((v, i) => {
-    const bh = Math.max(1, v/max*(h - 2));
-    ctx.fillStyle = v === 0 ? cB : v < avg*.5 ? cF : cD;
-    ctx.fillRect(i*bw, h - (v === 0 ? h : bh), Math.max(1, bw - (bw > 3 ? 1 : 0)), v === 0 ? h : bh);
-  });
-  ctx.fillStyle = cssv('--muted'); ctx.font = `500 ${rem*1.2}px ${cssv('--cond')}`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-  ctx.fillText(`${Math.round(max)} Mbps · ${n} s`, w - rem*.4, rem*.2);
-}
+const fmtSec = ms => ms == null ? '–' : ms < 60e3 ? (ms/1000).toFixed(ms < 10e3 ? 1 : 0) + ' s' : fmtDur(ms);
 
 /* ---------- Network info ---------- */
 const net = {ip: '…', isp: '…', loc: '…'};
@@ -862,7 +868,6 @@ function renderInfo(){
     ['Public IP', net.ip],
     ['Location', net.loc],
     ['Speed servers', `↓ GitHub · ↑ ${ulServer ? `Sharktech ${ulServer.name} (${f0(ulServer.rtt ?? ulServer.ms)} ms)` : UPLOAD ? 'finding…' : 'off'}`],
-    ['Download test', dlSource()?.name || 'finding…'],
     ['Browser estimate', link],
     ['Device', deviceText()],
     ['Screen', `${screen.width}×${screen.height} @${+devicePixelRatio.toFixed(2)}x · window ${innerWidth}×${innerHeight}`],
@@ -885,7 +890,7 @@ try { localStorage.removeItem('netmon:v2'); } catch(e){}
 /* ---------- Main loop ---------- */
 function render(){
   const now = Date.now(), cur = current(now);
-  renderTiles(cur); renderTargets(now); drawLatency(now); renderDl(now); drawSpeed(now); renderInfo();
+  renderTiles(cur); renderTargets(now); drawLatency(now); renderDl(); drawSpeed(now); renderInfo();
 }
 // Per-server lost-ping streaks go to the event log, so every loss can be traced
 function noteLoss(t, r){
@@ -915,7 +920,7 @@ async function tick(){
   });
   okS.push({t: now, r: ok/targets.length}); trim(okS, now);
   session.ticks++; if (ok) session.up++;
-  trim(speeds, now); trim(dls, now);
+  trim(speeds, now);
   applyStatus(evaluate(ok, current(now)));
   render();
 }
@@ -930,17 +935,12 @@ async function main(){
   if (UPLOAD) pickUploadServer();
   await Promise.all(targets.map(ping));            // warm-up: DNS + TLS, not counted
   // One scheduler for everything that loads the link; a test that comes due while another runs waits its turn
-  const t = Date.now();
-  if (SPEED_EVERY) nextSpeedAt = t + 20e3;
-  if (DL_EVERY) nextDlAt = t + 35e3;
-  if (BIG_EVERY) nextBigAt = t + 2*60e3;
-  setInterval(() => {
-    if (busy) return;
-    const now = Date.now(), due = at => at && now >= at;
-    if (due(nextSpeedAt)) speedTest();
-    else if (due(nextBigAt)) downloadRun('big');
-    else if (due(nextDlAt)) downloadRun('dl');
-  }, 1000);
+  // The download test starts right away; the first speed test runs after it
+  if (SPEED_EVERY) nextSpeedAt = Date.now() + 20e3;
+  if (DL_MIN) setTimeout(runSoak, 2000);
+  setInterval(() => { if (!busy && nextSpeedAt && Date.now() >= nextSpeedAt) speedTest(); }, 1000);
+  $('dlWrap').addEventListener('click', () => runSoak());
+  addEventListener('keydown', e => { if (e.key === 'd' || e.key === 'D') runSoak(); });
   while (true){
     const s = Date.now();
     await tick();
