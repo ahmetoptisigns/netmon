@@ -791,7 +791,7 @@ function renderDl(){
   cells.forEach(([k, v, cls]) => { const d = document.createElement('div'), b = document.createElement('b'); b.textContent = v; if (cls) b.className = cls; d.append(b, k + (k === 'Average' ? ' Mbps' : '')); sum.append(d); });
   const line = $('dlLine'); line.innerHTML = ''; line.style.removeProperty('--v');
   if (run){
-    const last3 = soak.secs.slice(-3), now = last3.length ? last3.reduce((a, b) => a + b, 0)/last3.length : null;
+    const last4 = soak.secs.slice(-4), now = last4.length ? last4.reduce((a, b) => a + b, 0)/last4.length : null;   // 2 slots, so bursts even out
     line.textContent = `Downloading… ${fmtClock(Date.now() - soak.t0)} of ${DL_MIN}:00 · now ${f1(now)} Mbps` + (s.zero ? ` · ${s.zero} s with no data` : '');
   } else if (fin){
     const b = document.createElement('b'); b.textContent = soak.why ? 'Failed' : s.verdict;
