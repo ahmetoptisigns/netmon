@@ -20,6 +20,22 @@ Test servers: Google, Apple (captive-portal check) and OptiSigns. The connection
 
 Every page load starts fresh; nothing is kept between reloads.
 
+## Preset links
+
+Same dashboard, different download test. Add `?name=...&ssid=...` to any of them; your options win over the preset.
+
+| Link | Download test |
+|---|---|
+| https://ahmetoptisigns.github.io/netmon/dashboard/ | none, dashboard only |
+| https://ahmetoptisigns.github.io/netmon/dl-5min-full/ | 5 min, no speed limit |
+| https://ahmetoptisigns.github.io/netmon/dl-5min/ | 5 min at 50 Mbps (~1.9 GB) |
+| https://ahmetoptisigns.github.io/netmon/dl-20min/ | 20 min at 50 Mbps (~7.5 GB) |
+| https://ahmetoptisigns.github.io/netmon/dl-1h/ | 1 hour at 50 Mbps (~22 GB) |
+| https://ahmetoptisigns.github.io/netmon/dl-4h/ | 4 hours at 50 Mbps (~90 GB) |
+| https://ahmetoptisigns.github.io/netmon/dl-8h/ | 8 hours at 50 Mbps (~180 GB) |
+
+The plain link (`/netmon/`) is the 20-minute test. GitHub Pages has a soft limit of about 100 GB a month for the whole site: one 8-hour run, or two 4-hour runs, goes over it, and GitHub may throttle or disable the site. For regular long runs, host a test file on the OptiSigns CDN and add `&dlurl=`.
+
 ## URL options
 
 | Option | Example | Meaning |
@@ -32,7 +48,7 @@ Every page load starts fresh; nothing is kept between reloads.
 | `speed` | `speed=600` | seconds between speed tests (default 300, `0` = off) |
 | `speedmb` | `speedmb=10` | fixed download size in MB (default: adaptive) |
 | `upload` | `upload=0` | skip the upload test |
-| `dlmin` | `dlmin=20` | download test length in minutes after the page opens (`0` = off) |
+| `dlmin` | `dlmin=20` | download test length in minutes after the page opens, up to 720 (`0` = off, panel hidden) |
 | `dlrate` | `dlrate=50` | download test pace in Mbps (`0` = full speed; latency status then pauses during it) |
 | `dlurl` | `dlurl=https://cdn.optisigns.com/...` | file for the download test (must allow cross-origin reads; fetched again and again) |
 | `targets` | `targets=Google\|https://www.google.com/generate_204,CF\|https://www.cloudflare.com/cdn-cgi/trace` | up to 6 https test servers |

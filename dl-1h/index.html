@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Monitor · 1 hour download at 50 Mbps</title>
+<style>html,body{background:#0d1720;color:#8aa0b2;font-family:system-ui,sans-serif}a{color:#5cc8ff}</style>
+<script>
+// Preset link: opens the dashboard with these settings. Anything already in this URL
+// (name=, ssid=, sec=, ...) is kept and wins over the preset.
+(function(){
+  var p = new URLSearchParams(location.search), preset = new URLSearchParams('dlmin=60&dlrate=50');
+  preset.forEach(function(v, k){ if (!p.has(k)) p.set(k, v); });
+  location.replace('../?' + p.toString() + location.hash);
+})();
+</script>
+</head>
+<body><p>Opening the network dashboard (1 hour download at 50 Mbps)… <a href="../?dlmin=60&dlrate=50">Open it</a></p></body>
+</html>

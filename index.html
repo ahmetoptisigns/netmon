@@ -31,6 +31,9 @@ body{
   grid-template-rows:auto auto minmax(0,1.25fr) minmax(0,1fr);
   grid-template-areas:"band band band" "kpi kpi kpi" "lat dl tgt" "spd info log";
 }
+/* dashboard only (dlmin=0): no download panel, latency takes its space */
+body.nodl{grid-template-areas:"band band band" "kpi kpi kpi" "lat lat tgt" "spd info log"}
+body.nodl #dlWrap{display:none}
 .num{font-family:var(--cond);font-variant-numeric:tabular-nums}
 .panel{background:var(--panel);border-radius:1rem;padding:1.2rem 1.6rem;min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .panel h3{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;font-size:1.7rem;font-weight:600;margin-bottom:.8rem}
@@ -105,6 +108,7 @@ canvas{display:block;width:100%;flex:1;min-height:0}
   :root{font-size:min(9px,1.6vw)}
   html,body{overflow:auto;height:auto}
   body{grid-template-columns:1fr;grid-template-rows:none;grid-template-areas:"band" "kpi" "lat" "dl" "tgt" "spd" "info" "log"}
+  body.nodl{grid-template-areas:"band" "kpi" "lat" "tgt" "spd" "info" "log"}
   #kpi{grid-template-columns:repeat(auto-fit,minmax(20rem,1fr))}
   #latWrap,#spdWrap,#dlWrap{height:34rem}
   #band{flex-wrap:wrap}
@@ -194,7 +198,7 @@ const RANGE = clamp(num('range', 60), 5, 240) * 60e3;
 const SPEED_EVERY = clamp(num('speed', 300), 0, 86400);
 const FIXED_MB = P.has('speedmb') ? clamp(num('speedmb', 10), .5, 200) : null;
 const UPLOAD = P.get('upload') !== '0';
-const DL_MIN = clamp(num('dlmin', 20), 0, 240);           // minutes of continuous download at page open, 0 = off
+const DL_MIN = clamp(num('dlmin', 20), 0, 720);           // minutes of continuous download at page open, 0 = off
 const DL_RATE = clamp(num('dlrate', 50), 0, 10000);       // Mbps pace, 0 = full speed
 const DL_SRC = P.get('dlurl') || '';                      // file to download; fetched again and again
 
@@ -708,7 +712,7 @@ async function runSoak(){
   busy = lastBusy = 'dl';
   Object.assign(soak, {state: 'running', t0: Date.now(), t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, why: ''});
   const src = dlSource(); soak.src = src?.name || null;
-  logEvent('info', `Download test started: ${DL_MIN} min ${DL_RATE ? `at ${DL_RATE} Mbps` : 'at full speed'}`);
+  logEvent('info', `Download test started: ${fmtMin(DL_MIN)} ${DL_RATE ? `at ${DL_RATE} Mbps` : 'at full speed'}`);
   const start = performance.now(), endAt = start + DL_MIN*60e3, ctrl = new AbortController();
   const stopT = setTimeout(() => ctrl.abort(), DL_MIN*60e3 + 500);
   let secStart = start, secBytes = 0, secIdle = 0, lastByte = start;
@@ -774,12 +778,14 @@ function soakSummary(){
   else if (soak.drops || soak.stalls || zero || (lag != null && lag > 5)){ verdict = 'Mostly stable'; kind = 'fair'; }
   return {avg, worst5, zero, lag, verdict, kind, dur};
 }
-const fmtClock = ms => { const s = Math.max(0, Math.round(ms/1000)); return `${Math.floor(s/60)}:${pad(s % 60)}`; };
+const fmtClock = ms => { const s = Math.max(0, Math.round(ms/1000)), h = Math.floor(s/3600), m = Math.floor(s/60) % 60;
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${Math.floor(s/60)}:${pad(s % 60)}`; };
+const fmtMin = m => m >= 60 ? `${+(m/60).toFixed(1)} h` : `${+m.toFixed(1)} min`;
 function renderDl(){
   const s = soakSummary(), run = soak.state === 'running', fin = soak.state === 'done' || soak.state === 'failed';
   const left = run ? soak.t0 + DL_MIN*60e3 - Date.now() : 0;
   const rate = DL_RATE ? `${DL_RATE} Mbps` : 'full speed';
-  $('dlHead').textContent = !DL_MIN ? 'off' : `${DL_MIN} min at ${rate} · ${soak.src || 'finding server…'}` +
+  $('dlHead').textContent = !DL_MIN ? 'off' : `${fmtMin(DL_MIN)} at ${rate} · ${soak.src || 'finding server…'}` +
     (run ? ` · ${fmtClock(left)} left` : fin ? ` · ran ${hm(soak.t0)}–${hm(soak.t1)} · tap to run again` : '');
   const cells = [
     ['Downloaded', soak.t0 ? fmtBytes(soak.bytes) : '–', ''],
@@ -792,7 +798,7 @@ function renderDl(){
   const line = $('dlLine'); line.innerHTML = ''; line.style.removeProperty('--v');
   if (run){
     const last4 = soak.secs.slice(-4), now = last4.length ? last4.reduce((a, b) => a + b, 0)/last4.length : null;   // 2 slots, so bursts even out
-    line.textContent = `Downloading… ${fmtClock(Date.now() - soak.t0)} of ${DL_MIN}:00 · now ${f1(now)} Mbps` + (s.zero ? ` · ${s.zero} s with no data` : '');
+    line.textContent = `Downloading… ${fmtClock(Date.now() - soak.t0)} of ${fmtClock(DL_MIN*60e3)} · now ${f1(now)} Mbps` + (s.zero ? ` · ${s.zero} s with no data` : '');
   } else if (fin){
     const b = document.createElement('b'); b.textContent = soak.why ? 'Failed' : s.verdict;
     line.style.setProperty('--v', `var(--${soak.why ? 'bad' : s.kind})`);
@@ -812,7 +818,7 @@ function drawDl(){
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for (let k = 0; k <= 4; k++){ const v = ymax*k/4, yy = Math.round(Y(v)) + .5; ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + pw, yy); ctx.stroke(); ctx.fillText(Math.round(v), padL - rem*.6, yy); }
   ctx.textBaseline = 'top';
-  for (let k = 0; k <= 4; k++){ ctx.textAlign = k === 0 ? 'left' : k === 4 ? 'right' : 'center'; ctx.fillText(k === 0 ? '0' : `${Math.round(DL_MIN*k/4*10)/10} min`, padL + pw*k/4, padT + ph + rem*.6); }
+  for (let k = 0; k <= 4; k++){ ctx.textAlign = k === 0 ? 'left' : k === 4 ? 'right' : 'center'; ctx.fillText(k === 0 ? '0' : fmtMin(DL_MIN*k/4), padL + pw*k/4, padT + ph + rem*.6); }
   // one column per pixel-ish bucket of seconds; red where a whole second had no data
   // at least 3 s per column: paced downloads arrive in ~1 s bursts, so single seconds are jumpy
   const nb = Math.max(1, Math.min(Math.floor(total/3), Math.floor(pw/2))), per = total/nb, bw = pw/nb;
@@ -942,6 +948,7 @@ async function tick(){
 async function main(){
   $('playerName').textContent = NAME || deviceText() || 'This device';
   $('wifi').textContent = [SSID && 'Wi-Fi ' + SSID, SEC, AP && 'AP ' + AP].filter(Boolean).join(' · ');
+  document.body.classList.toggle('nodl', !DL_MIN);
   buildTiles(); buildTargets(); renderLog(); render();
   const clock = () => { $('clock').textContent = new Date().toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); };
   clock(); setInterval(clock, 1000);
