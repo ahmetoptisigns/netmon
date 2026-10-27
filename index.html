@@ -688,7 +688,9 @@ addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') speedTest
 const soak = {state: 'idle', t0: null, t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, src: null, why: ''};
 // Paced like a player: fetch ~2 s worth of data at full speed, then wait out the rest of the slot.
 // (Throttling by not reading the stream made TCP collapse well below the target on long runs.)
-const CK_MIB = DL_RATE ? Math.max(1, Math.round(DL_RATE*2/8.389)) : 100;   // LibreSpeed chunk: ~2 s worth, MiB per request
+// Each slot is split over 3 parallel connections so one slow server connection can't cap the result.
+const SOAK_STREAMS = 3;
+const CK_MIB = DL_RATE ? Math.max(1, Math.round(DL_RATE*2/8.389/SOAK_STREAMS)) : 50;   // MiB per request
 function dlSource(){
   if (DL_SRC) return {name: (() => { try { return new URL(DL_SRC).hostname; } catch(e){ return DL_SRC; } })(), url: () => DL_SRC};
   if (!ulServer) return null;
@@ -703,41 +705,47 @@ async function runSoak(){
   logEvent('info', `Download test started: ${DL_MIN} min ${DL_RATE ? `at ${DL_RATE} Mbps` : 'at full speed'}`);
   const start = performance.now(), endAt = start + DL_MIN*60e3, ctrl = new AbortController();
   const stopT = setTimeout(() => ctrl.abort(), DL_MIN*60e3 + 500);
-  let secStart = start, secBytes = 0, secIdle = 0;
+  let secStart = start, secBytes = 0, secIdle = 0, lastByte = start;
   const flush = now => { while (now - secStart >= 1000 && soak.secs.length < DL_MIN*60){ soak.secs.push(secBytes*8/1e6); soak.idle.push(secIdle); secBytes = 0; secIdle = 0; secStart += 1000; } };
   // waiting on purpose (pacing) is recorded so those seconds don't count as "no data"
-  const pace = async ms => { const until = Math.min(performance.now() + ms, endAt); while (performance.now() < until){ const a = performance.now(); await sleep(Math.min(250, until - a)); const b = performance.now(); flush(b); secIdle += b - a; } };
-  // A single failed request is retried at once: free servers sometimes answer an error, which a
-  // browser can't tell apart from a lost connection. Only a failed retry counts as a drop.
+  const pace = async ms => { const until = Math.min(performance.now() + ms, endAt); while (performance.now() < until){ const a = performance.now(); await sleep(Math.min(250, until - a)); const b = performance.now(); flush(b); secIdle += b - a; lastByte = b; } };
+  const readOne = async () => {
+    const u = src.url();
+    const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'r=' + rnd(), {cache:'no-store', credentials:'omit', signal: ctrl.signal});
+    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    const rd = r.body.getReader();
+    for (;;){
+      const w0 = performance.now();
+      const {done, value} = await rd.read();
+      const now = performance.now();
+      // a stall: this read waited 1 s or more AND no connection received anything in that time
+      if (now - w0 >= 1000 && now - lastByte >= 1000){ soak.stalls++; soak.stallMs += now - lastByte; }
+      flush(now);
+      if (done) break;
+      lastByte = now; soak.bytes += value.length; secBytes += value.length; session.bytes += value.length;
+      if (now >= endAt){ rd.cancel().catch(() => {}); break; }
+    }
+  };
+  // If every connection in a slot fails, retry once straight away: free servers sometimes answer an
+  // error, which a browser can't tell apart from a lost connection. Only a failed retry is a drop.
   let fails = 0;
   while (performance.now() < endAt){
     if (!src){ soak.why = 'no download server reachable'; break; }
-    try {
-      const u = src.url();
-      const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'r=' + rnd(), {cache:'no-store', credentials:'omit', signal: ctrl.signal});
-      if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-      const rd = r.body.getReader();
-      for (;;){
-        const w0 = performance.now();
-        const {done, value} = await rd.read();
-        const now = performance.now(), wait = now - w0;
-        if (wait >= 1000){ soak.stalls++; soak.stallMs += wait; }
-        flush(now);
-        if (done) break;
-        if (fails){ if (fails > 1) logEvent('good', 'Download reconnected'); fails = 0; }
-        soak.bytes += value.length; secBytes += value.length; session.bytes += value.length;
-        if (now >= endAt){ rd.cancel().catch(() => {}); break; }
-      }
-      if (DL_RATE){
-        const ahead = soak.bytes*8/(DL_RATE*1e3) - (performance.now() - start);   // ms; negative = behind pace
-        if (ahead > 0) await pace(ahead); else soak.behind = Math.max(soak.behind, -ahead);
-      }
-    } catch(e){
-      if (ctrl.signal.aborted || performance.now() >= endAt - 100) break;
+    const res = await Promise.allSettled(Array.from({length: SOAK_STREAMS}, readOne));
+    if (ctrl.signal.aborted || performance.now() >= endAt - 100) break;
+    const bad = res.filter(x => x.status === 'rejected');
+    if (bad.length === SOAK_STREAMS){
       fails++;
-      if (fails === 1){ soak.retries++; continue; }            // retry once straight away
-      if (fails === 2){ soak.drops++; logEvent('bad', `Download dropped (${String(e.message || '').startsWith('HTTP') ? e.message : 'connection lost'}), reconnecting`); }
-      await sleep(1000);
+      if (fails === 1){ soak.retries++; continue; }
+      if (fails === 2){ soak.drops++; const m = String(bad[0].reason?.message || ''); logEvent('bad', `Download dropped (${m.startsWith('HTTP') ? m : 'connection lost'}), reconnecting`); }
+      await sleep(1000); continue;
+    }
+    soak.retries += bad.length;                                  // some connections failed, the rest carried on
+    if (fails > 1) logEvent('good', 'Download reconnected');
+    fails = 0;
+    if (DL_RATE){
+      const ahead = soak.bytes*8/(DL_RATE*1e3) - (performance.now() - start);   // ms; negative = behind pace
+      if (ahead > 0) await pace(ahead); else soak.behind = Math.max(soak.behind, -ahead);
     }
   }
   clearTimeout(stopT); flush(Math.min(performance.now(), endAt));
