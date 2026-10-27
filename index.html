@@ -691,16 +691,22 @@ const soak = {state: 'idle', t0: null, t1: null, bytes: 0, secs: [], idle: [], s
 // Each slot is split over 3 parallel connections so one slow server connection can't cap the result.
 const SOAK_STREAMS = 3;
 const CK_MIB = DL_RATE ? Math.max(1, Math.round(DL_RATE*2/8.389/SOAK_STREAMS)) : 50;   // MiB per request
+// Default source: the test file hosted with this page (GitHub Pages CDN), read as random byte
+// ranges so each request is exactly one slice of the slot. The free LibreSpeed servers couldn't
+// hold a steady 50 Mbps, so they skewed the result. GitHub's soft limit is ~100 GB/month per site.
+const BLOB_BYTES = 25e6;
 function dlSource(){
   if (DL_SRC) return {name: (() => { try { return new URL(DL_SRC).hostname; } catch(e){ return DL_SRC; } })(), url: () => DL_SRC};
-  if (!ulServer) return null;
-  return {name: `LibreSpeed ${ulServer.name}`, url: () => ulServer.url.replace('empty.php', 'garbage.php') + '?ckSize=' + CK_MIB};
+  const len = Math.min(CK_MIB*1048576, BLOB_BYTES);
+  return {name: 'GitHub (this site)', url: () => DL_URL, range: () => {
+    const from = Math.floor(Math.random()*(BLOB_BYTES - len + 1));
+    return `bytes=${from}-${from + len - 1}`;
+  }};
 }
 async function runSoak(){
   if (busy || !DL_MIN) return;
   busy = lastBusy = 'dl';
   Object.assign(soak, {state: 'running', t0: Date.now(), t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, why: ''});
-  if (!DL_SRC && !ulServer) await pickUploadServer();
   const src = dlSource(); soak.src = src?.name || null;
   logEvent('info', `Download test started: ${DL_MIN} min ${DL_RATE ? `at ${DL_RATE} Mbps` : 'at full speed'}`);
   const start = performance.now(), endAt = start + DL_MIN*60e3, ctrl = new AbortController();
@@ -711,7 +717,8 @@ async function runSoak(){
   const pace = async ms => { const until = Math.min(performance.now() + ms, endAt); while (performance.now() < until){ const a = performance.now(); await sleep(Math.min(250, until - a)); const b = performance.now(); flush(b); secIdle += b - a; lastByte = b; } };
   const readOne = async () => {
     const u = src.url();
-    const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'r=' + rnd(), {cache:'no-store', credentials:'omit', signal: ctrl.signal});
+    const r = await fetch(src.range ? u : u + (u.includes('?') ? '&' : '?') + 'r=' + rnd(),
+      {cache:'no-store', credentials:'omit', signal: ctrl.signal, headers: src.range ? {Range: src.range()} : {}});
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
     const rd = r.body.getReader();
     for (;;){
