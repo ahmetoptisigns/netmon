@@ -64,6 +64,19 @@ canvas{display:block;width:100%;flex:1;min-height:0}
 
 #latWrap{grid-area:lat} #spdWrap{grid-area:spd}
 
+/* Timeline: replaces Speed tests on download-test links (speed tests wait for the download anyway) */
+#tlWrap{grid-area:spd}
+body:not(.dlmode) #tlWrap, body.dlmode #spdWrap{display:none}
+#tl{display:grid;grid-template-columns:auto repeat(7,minmax(0,1fr)) auto;column-gap:1rem;row-gap:.2rem;align-content:start;overflow:hidden;font-family:var(--cond);font-size:1.9rem;font-variant-numeric:tabular-nums}
+#tl div{text-align:right;white-space:nowrap}
+#tl .h{font-family:var(--sans);font-size:1.4rem;color:var(--muted);padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+#tl .tm{text-align:left;color:var(--muted)}
+#tl .h.tm{color:var(--muted)}
+#tl .w{color:var(--fair)} #tl .x{color:var(--bad);font-weight:700}
+#tl i{width:1.3rem;height:1.3rem;border-radius:50%;background:var(--d);align-self:center;justify-self:end}
+#tl .now{color:var(--text)}
+#tl .empty{grid-column:1/-1;text-align:left;color:var(--muted);font-family:var(--sans);font-size:1.6rem;padding-top:1rem}
+
 /* Download consistency */
 #dlWrap{grid-area:dl}
 #dlSum{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:.6rem}
@@ -147,6 +160,11 @@ canvas{display:block;width:100%;flex:1;min-height:0}
   <h3>Test servers <span id="tgtHead"></span></h3>
   <div id="tgt"></div>
   <div id="tgtNote">Ping = timed HTTPS request (browsers can't send ICMP). Bar under the chart: green all answered · yellow some lost · red none.</div>
+</section>
+
+<section id="tlWrap" class="panel">
+  <h3>Timeline <span id="tlHead"></span></h3>
+  <div id="tl"></div>
 </section>
 
 <section id="spdWrap" class="panel">
@@ -689,7 +707,7 @@ addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') speedTest
   pulling content (0 = full speed). Records the speed of every second, stalls
   (a read that waited 1 s or more for data) and drops (the connection failed;
   it reconnects and carries on). */
-const soak = {state: 'idle', t0: null, t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, src: null, why: ''};
+const soak = {state: 'idle', t0: null, t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, ev: [], src: null, why: ''};
 // Paced like a player: fetch ~2 s worth of data at full speed, then wait out the rest of the slot.
 // (Throttling by not reading the stream made TCP collapse well below the target on long runs.)
 // Each slot is split over 3 parallel connections so one slow server connection can't cap the result.
@@ -710,7 +728,7 @@ function dlSource(){
 async function runSoak(){
   if (busy || !DL_MIN) return;
   busy = lastBusy = 'dl';
-  Object.assign(soak, {state: 'running', t0: Date.now(), t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, why: ''});
+  Object.assign(soak, {state: 'running', t0: Date.now(), t1: null, bytes: 0, secs: [], idle: [], stalls: 0, stallMs: 0, drops: 0, retries: 0, behind: 0, ev: [], why: ''}); tlRows.length = 0;
   const src = dlSource(); soak.src = src?.name || null;
   logEvent('info', `Download test started: ${fmtMin(DL_MIN)} ${DL_RATE ? `at ${DL_RATE} Mbps` : 'at full speed'}`);
   const start = performance.now(), endAt = start + DL_MIN*60e3, ctrl = new AbortController();
@@ -730,7 +748,7 @@ async function runSoak(){
       const {done, value} = await rd.read();
       const now = performance.now();
       // a stall: this read waited 1 s or more AND no connection received anything in that time
-      if (now - w0 >= 1000 && now - lastByte >= 1000){ soak.stalls++; soak.stallMs += now - lastByte; }
+      if (now - w0 >= 1000 && now - lastByte >= 1000){ soak.stalls++; soak.stallMs += now - lastByte; soak.ev.push({t: Date.now(), k: 's'}); }
       flush(now);
       if (done) break;
       lastByte = now; soak.bytes += value.length; secBytes += value.length; session.bytes += value.length;
@@ -748,7 +766,7 @@ async function runSoak(){
     if (bad.length === SOAK_STREAMS){
       fails++;
       if (fails === 1){ soak.retries++; continue; }
-      if (fails === 2){ soak.drops++; const m = String(bad[0].reason?.message || ''); logEvent('bad', `Download dropped (${m.startsWith('HTTP') ? m : 'connection lost'}), reconnecting`); }
+      if (fails === 2){ soak.drops++; soak.ev.push({t: Date.now(), k: 'd'}); const m = String(bad[0].reason?.message || ''); logEvent('bad', `Download dropped (${m.startsWith('HTTP') ? m : 'connection lost'}), reconnecting`); }
       await sleep(1000); continue;
     }
     soak.retries += bad.length;                                  // some connections failed, the rest carried on
@@ -841,6 +859,51 @@ function drawDl(){
 }
 const fmtSec = ms => ms == null ? '–' : ms < 60e3 ? (ms/1000).toFixed(ms < 10e3 ? 1 : 0) + ' s' : fmtDur(ms);
 
+/* ---------- Timeline ----------
+  On download-test links: one row per block of the test (block length scales with
+  the test), so you can see WHEN things got worse. A block's row is frozen when the
+  block ends, so long runs keep every row even after ping history rolls off. */
+const TL_MIN = DL_MIN <= 5 ? 1 : DL_MIN <= 20 ? 2 : DL_MIN <= 60 ? 5 : DL_MIN <= 240 ? 15 : 30;
+const tlRows = [];
+function blockRow(b0, b1){
+  const per = targets.map(t => stats(t.s.filter(s => s.t >= b0 && s.t < b1)));
+  const i0 = Math.max(0, Math.floor((b0 - soak.t0)/1000)), i1 = Math.floor((b1 - soak.t0)/1000);
+  const sec = soak.secs.slice(i0, i1);
+  const zero = sec.filter((v, k) => v === 0 && (soak.idle[i0 + k] || 0) < 500).length;
+  const ev = soak.ev.filter(e => e.t >= b0 && e.t < b1);
+  const r = {t: b0, lat: best(per.map(p => p.avg)), p95: best(per.map(p => p.p95)), loss: best(per.map(p => p.loss)),
+             jit: best(per.map(p => p.jit)), mbps: sec.length ? sec.reduce((a, b) => a + b, 0)/sec.length : null,
+             stalls: ev.filter(e => e.k === 's').length, drops: ev.filter(e => e.k === 'd').length, zero};
+  r.kind = r.drops || r.loss > .05 || r.lat > 400 || zero > 2 ? 'bad'
+         : r.stalls || r.loss > .005 || r.lat > 150 || r.jit > 50 || zero || (DL_RATE && r.mbps != null && r.mbps < DL_RATE*.9) ? 'fair' : 'good';
+  return r;
+}
+function renderTimeline(now){
+  if (!DL_MIN) return;
+  const step = TL_MIN*60e3, wrap = $('tl');
+  $('tlHead').textContent = `every ${TL_MIN} min · newest first`;
+  wrap.innerHTML = '';
+  const cell = (txt, cls) => { const d = document.createElement('div'); d.textContent = txt; if (cls) d.className = cls; wrap.append(d); };
+  ['Time', 'Latency', 'p95', 'Loss', 'Jitter', '↓ Mbps', 'Stalls', 'Drops', ''].forEach((h, i) => cell(h, 'h' + (i ? '' : ' tm')));
+  if (!soak.t0){ cell('Fills in block by block once the download test starts', 'empty'); return; }
+  const end = soak.t1 || now;
+  while (soak.t0 + (tlRows.length + 1)*step <= end){ const b0 = soak.t0 + tlRows.length*step; tlRows.push(blockRow(b0, b0 + step)); }
+  const rows = tlRows.slice(), b0 = soak.t0 + tlRows.length*step;
+  if (b0 < end - 1000){
+    const r = blockRow(b0, end);
+    if (soak.t1) tlRows.push(r); else r.live = true;     // a finished test freezes its last, shorter block too
+    rows.push(r);
+  }
+  rows.reverse().forEach(r => {
+    const w = (v, fair, bad) => v == null ? '' : v > bad ? 'x' : v > fair ? 'w' : '';
+    cell(hm(r.t) + (r.live ? ' ▸' : ''), 'tm' + (r.live ? ' now' : ''));
+    cell(f0(r.lat), w(r.lat, 150, 400)); cell(f0(r.p95)); cell(pctTxt(r.loss), w(r.loss, .005, .05)); cell(f0(r.jit), w(r.jit, 50, 150));
+    cell(f1(r.mbps), DL_RATE && r.mbps != null && r.mbps < DL_RATE*.9 ? 'w' : '');
+    cell(String(r.stalls), r.stalls ? 'w' : ''); cell(String(r.drops), r.drops ? 'x' : '');
+    const dot = document.createElement('i'); dot.style.setProperty('--d', `var(--${r.kind})`); wrap.append(dot);
+  });
+}
+
 /* ---------- Network info ---------- */
 const net = {ip: '…', isp: '…', loc: '…'};
 // ipinfo.io first, ipwho.is as a fallback; both allow cross-origin reads without a key
@@ -911,7 +974,7 @@ try { localStorage.removeItem('netmon:v2'); } catch(e){}
 /* ---------- Main loop ---------- */
 function render(){
   const now = Date.now(), cur = current(now);
-  renderTiles(cur); renderTargets(now); drawLatency(now); renderDl(); drawSpeed(now); renderInfo();
+  renderTiles(cur); renderTargets(now); drawLatency(now); renderDl(); drawSpeed(now); renderTimeline(now); renderInfo();
 }
 // Per-server lost-ping streaks go to the event log, so every loss can be traced
 function noteLoss(t, r){
@@ -949,6 +1012,7 @@ async function main(){
   $('playerName').textContent = NAME || deviceText() || 'This device';
   $('wifi').textContent = [SSID && 'Wi-Fi ' + SSID, SEC, AP && 'AP ' + AP].filter(Boolean).join(' · ');
   document.body.classList.toggle('nodl', !DL_MIN);
+  document.body.classList.toggle('dlmode', !!DL_MIN);
   buildTiles(); buildTargets(); renderLog(); render();
   const clock = () => { $('clock').textContent = new Date().toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); };
   clock(); setInterval(clock, 1000);
