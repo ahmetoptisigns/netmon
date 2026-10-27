@@ -29,7 +29,7 @@ body{
   display:grid;gap:1.2rem;padding:1.4rem;
   grid-template-columns:1.15fr 1.15fr .7fr;   /* test servers / events ~30% narrower */
   grid-template-rows:auto auto minmax(0,1.25fr) minmax(0,1fr);
-  grid-template-areas:"band band band" "kpi kpi kpi" "lat dl tgt" "spd info log";
+  grid-template-areas:"band band band" "kpi kpi kpi" "dl lat tgt" "spd info log";
 }
 /* dashboard only (dlmin=0): no download panel, latency takes its space */
 body.nodl{grid-template-areas:"band band band" "kpi kpi kpi" "lat lat tgt" "spd info log"}
